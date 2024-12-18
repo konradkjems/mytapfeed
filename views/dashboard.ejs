@@ -1,0 +1,23 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <title>Dashboard</title>
+</head>
+<body>
+    <h1>Velkommen <%= user.username %></h1>
+
+    <% if (messages.success && messages.success.length > 0) { %>
+        <div style="color: green;"><%= messages.success %></div>
+    <% } %>
+    <% if (messages.error && messages.error.length > 0) { %>
+        <div style="color: red;"><%= messages.error %></div>
+    <% } %>
+
+    <div>
+        <h2>Dit Dashboard</h2>
+        <!-- Her kan du tilføje dashboard funktionalitet -->
+    </div>
+
+    <a href="/logout">Log ud</a>
+</body>
+</html> 
