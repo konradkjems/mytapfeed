@@ -5,9 +5,7 @@
     "node": "16.x"
   },
   "scripts": {
-    "start": "node server.js",
-    "build": "cd frontend && npm install && CI=false npm run build",
-    "vercel-build": "npm run build"
+    "start": "node server.js"
   },
   "dependencies": {
     "@next/font": "^14.2.15",
