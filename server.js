@@ -64,16 +64,20 @@ console.log('Cloudinary Environment Variables:', {
     api_secret_exists: !!process.env.CLOUDINARY_API_SECRET
 });
 
+console.log('Server starter med miljø:', {
+    nodeEnv: process.env.NODE_ENV,
+    mongoDbUri: process.env.MONGODB_URI?.substring(0, 20) + '...',
+    hasGoogleCreds: !!process.env.GOOGLE_CLIENT_ID && !!process.env.GOOGLE_CLIENT_SECRET,
+    hasCloudinaryCreds: !!process.env.CLOUDINARY_API_KEY
+});
+
 const app = express();
-const port = 3000;
 
 // CORS konfiguration
 app.use(cors({
-    origin: [
-        'https://my.tapfeed.dk',
-        'https://tapfeed.vercel.app',
-        'http://localhost:3001'  // for udvikling
-    ],
+    origin: process.env.NODE_ENV === 'production' 
+        ? ['https://my.tapfeed.dk', 'https://tapfeed.vercel.app']
+        : 'http://localhost:3001',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Access-Control-Allow-Origin', 'Cookie']
@@ -84,18 +88,21 @@ app.use(express.urlencoded({ extended: true }));
 
 // Session middleware
 const sessionMiddleware = session({
-    secret: 'your-secret-key',
-    resave: true,
-    saveUninitialized: true,
+    secret: process.env.SESSION_SECRET || 'your-secret-key',
+    resave: false,
+    saveUninitialized: false,
     store: MongoStore.create({
         mongoUrl: process.env.MONGODB_URI,
-        ttl: 24 * 60 * 60 // 1 dag
+        ttl: 24 * 60 * 60, // 1 dag
+        autoRemove: 'native',
+        touchAfter: 24 * 3600 // Opdater session hver 24. time
     }),
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000,
-        sameSite: 'lax'
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : undefined
     }
 });
 
@@ -1373,10 +1380,68 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
     }
 });
 
+// Øverst i filen, efter imports
+const app = express();
+
+// Fjern den eksisterende port definition og listen call
+// const port = 3000;
+// if (process.env.NODE_ENV !== 'production') {
+//     app.listen(process.env.PORT || 3000, () => {
+//         console.log(`Server kører på port ${process.env.PORT || 3000}`);
+//     });
+// }
+
+// Tilføj denne linje i stedet, lige før module.exports
 if (process.env.NODE_ENV !== 'production') {
-    app.listen(process.env.PORT || 3000, () => {
-        console.log(`Server kører på port ${process.env.PORT || 3000}`);
+    const port = process.env.PORT || 3000;
+    app.listen(port, () => {
+        console.log(`Development server kører på port ${port}`);
     });
 }
+
+// Opdater session middleware konfigurationen
+const sessionMiddleware = session({
+    secret: process.env.SESSION_SECRET || 'your-secret-key',
+    resave: false,  // Ændret til false
+    saveUninitialized: false,  // Ændret til false
+    store: MongoStore.create({
+        mongoUrl: process.env.MONGODB_URI,
+        ttl: 24 * 60 * 60, // 1 dag
+        autoRemove: 'native',  // Tilføjet for bedre oprydning
+        touchAfter: 24 * 3600 // Opdater session hver 24. time
+    }),
+    cookie: {
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        maxAge: 24 * 60 * 60 * 1000,
+        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',  // Ændret for at virke med cross-site
+        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : undefined  // Tilføj domain i production
+    }
+});
+
+// Opdater CORS konfigurationen
+app.use(cors({
+    origin: process.env.NODE_ENV === 'production' 
+        ? ['https://my.tapfeed.dk', 'https://tapfeed.vercel.app']
+        : 'http://localhost:3001',
+    credentials: true,
+    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+    allowedHeaders: ['Content-Type', 'Authorization', 'Access-Control-Allow-Origin', 'Cookie']
+}));
+
+// Tilføj error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Server fejl:', {
+        message: err.message,
+        stack: err.stack,
+        path: req.path,
+        method: req.method
+    });
+    
+    res.status(500).json({
+        message: 'Der opstod en serverfejl',
+        error: process.env.NODE_ENV === 'production' ? {} : err.message
+    });
+});
 
 module.exports = app;
