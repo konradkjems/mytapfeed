@@ -114,22 +114,6 @@ app.use(session({
     }
 })); 
 
-app.use(sessionMiddleware);
-
-// Passport configuration
-passport.serializeUser((user, done) => {
-    done(null, user.id);
-});
-
-passport.deserializeUser(async (id, done) => {
-    try {
-        const user = await User.findById(id);
-        done(null, user);
-    } catch (error) {
-        done(error, null);
-    }
-});
-
 // Initialize Passport and restore authentication state from session
 app.use(passport.initialize());
 app.use(passport.session());
