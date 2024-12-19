@@ -85,11 +85,11 @@ if (!app) {
 // CORS konfiguration
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
-        ? ['https://my.tapfeed.dk']
+        ? ['https://my.tapfeed.dk', 'http://localhost:3001']
         : 'http://localhost:3001',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Access-Control-Allow-Origin', 'Cookie']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie']
 }));
 
 app.use(express.json());
@@ -111,7 +111,7 @@ app.use(session({
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : undefined
+        domain: process.env.NODE_ENV === 'production' ? 'api.tapfeed.dk' : undefined
     }
 })); 
 
@@ -211,7 +211,9 @@ async function(accessToken, refreshToken, profile, cb) {
 passport.use('google-business', new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: "http:///api/auth/google-business/callback",
+    callbackURL: process.env.NODE_ENV === 'production'
+        ? "https://api.tapfeed.dk/auth/google-business/callback"
+        : "http://localhost:3000/api/auth/google-business/callback",
     scope: [
         'profile', 
         'email', 
