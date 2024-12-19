@@ -2,20 +2,21 @@
     "version": 2,
     "builds": [
         {
-            "src": "frontend/package.json",
-            "use": "@vercel/static-build",
-            "config": {
-                "distDir": "build"
-            }
+            "src": "server.js",
+            "use": "@vercel/node"
         }
     ],
     "routes": [
         {
-            "handle": "filesystem"
+            "src": "/api/(.*)",
+            "dest": "/server.js"
         },
         {
             "src": "/(.*)",
-            "dest": "/build/index.html"
+            "dest": "/server.js"
         }
-    ]
+    ],
+    "env": {
+        "NODE_ENV": "production"
+    }
 }
