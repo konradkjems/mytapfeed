@@ -85,15 +85,12 @@ if (!app) {
 // CORS konfiguration
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
-        ? ['https://mytapfeed.vercel.app', 'https://my.tapfeed.dk']
+        ? ['https://my.tapfeed.dk']
         : 'http://localhost:3001',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Access-Control-Allow-Origin', 'Cookie']
 }));
-
-// Serve static files fra frontend build mappen
-app.use(express.static(path.join(__dirname, '../frontend/build')));
 
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
@@ -214,7 +211,7 @@ async function(accessToken, refreshToken, profile, cb) {
 passport.use('google-business', new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: "http://localhost:3000/api/auth/google-business/callback",
+    callbackURL: "http:///api/auth/google-business/callback",
     scope: [
         'profile', 
         'email', 

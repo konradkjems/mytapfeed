@@ -6,8 +6,8 @@
   },
   "scripts": {
     "start": "node server.js",
-    "build": "echo 'Building backend...'",
-    "vercel-build": "cd frontend && CI=false npm install && npm run build"
+    "build": "cd frontend && npm install && CI=false npm run build",
+    "vercel-build": "npm run build"
   },
   "dependencies": {
     "express": "^4.18.2",
