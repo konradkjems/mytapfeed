@@ -17,8 +17,6 @@
         }
     ],
     "env": {
-        "NODE_ENV": "production",
-        "SESSION_SECRET": "@session_secret",
-        "MONGODB_URI": "@mongodb_uri"
+        "NODE_ENV": "production"
     }
 }
