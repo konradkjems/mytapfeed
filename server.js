@@ -359,25 +359,33 @@ app.post('/api/auth/login', async (req, res) => {
         // Find bruger
         const user = await User.findOne({ username });
         if (!user) {
-            return res.status(401).json({ message: 'Forkert brugernavn eller adgangskode' });
+            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
         }
 
-        // Verificer password
-        const validPassword = await bcrypt.compare(password, user.password);
-        if (!validPassword) {
-            return res.status(401).json({ message: 'Forkert brugernavn eller adgangskode' });
+        const isValidPassword = await bcrypt.compare(password, user.password);
+        if (!isValidPassword) {
+            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
         }
 
-        // Gem bruger ID i session
+        // Gem bruger info i session
         req.session.userId = user._id;
-
-        // Send brugerdata tilbage (uden password)
-        const userWithoutPassword = user.toObject();
-        delete userWithoutPassword.password;
+        req.session.isAdmin = user.isAdmin;
+        
+        // Gem session explicit
+        await new Promise((resolve, reject) => {
+            req.session.save((err) => {
+                if (err) reject(err);
+                resolve();
+            });
+        });
 
         res.json({
             message: 'Login succesfuldt',
-            user: userWithoutPassword
+            user: {
+                id: user._id,
+                username: user.username,
+                isAdmin: user.isAdmin
+            }
         });
     } catch (error) {
         console.error('Login fejl:', error);
@@ -1433,7 +1441,7 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
 app.set('trust proxy', 1);
 
 // 404 handler for ukendte endpoints
-app.use((req, res) => {
+app.use('*', (req, res) => {
     res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 
