@@ -1435,26 +1435,8 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
 // Konfigurer app indstillinger
 app.set('trust proxy', 1);
 
-// API routes
-const apiRouter = express.Router();
-
-// API endpoints
-apiRouter.get('/', (req, res) => {
-    res.json({ message: 'TapFeed API er kørende' });
-});
-
-// Flyt alle eksisterende API routes til apiRouter
-apiRouter.post('/auth/login', async (req, res) => {
-    // ... eksisterende login logik
-});
-
-// ... flyt andre API routes på samme måde
-
-// Mount API router før 404 handler
-app.use('/api', apiRouter);
-
 // 404 handler for ukendte endpoints
-app.use('*', (req, res) => {
+app.use((req, res) => {
     res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 
