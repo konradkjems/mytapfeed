@@ -1451,6 +1451,14 @@ app.use((err, req, res, next) => {
 
 // 404 handler skal være sidste middleware
 app.use((req, res) => {
+    console.log('404 Fejl:', {
+        method: req.method,
+        url: req.url,
+        path: req.path,
+        headers: req.headers,
+        body: req.body,
+        timestamp: new Date().toISOString()
+    });
     res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 
