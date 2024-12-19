@@ -1434,10 +1434,29 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
 
 // Konfigurer app indstillinger
 app.set('trust proxy', 1);
-//     app.listen(process.env.PORT || 3000, () => {
-//         console.log(`Server kører på port ${process.env.PORT || 3000}`);
-//     });
-// }
+
+// API routes
+const apiRouter = express.Router();
+
+// API endpoints
+apiRouter.get('/', (req, res) => {
+    res.json({ message: 'TapFeed API er kørende' });
+});
+
+// Flyt alle eksisterende API routes til apiRouter
+apiRouter.post('/auth/login', async (req, res) => {
+    // ... eksisterende login logik
+});
+
+// ... flyt andre API routes på samme måde
+
+// Mount API router før 404 handler
+app.use('/api', apiRouter);
+
+// 404 handler for ukendte endpoints
+app.use('*', (req, res) => {
+    res.status(404).json({ message: 'Endpoint ikke fundet' });
+});
 
 // Tilføj denne linje i stedet, lige før module.exports
 if (process.env.NODE_ENV !== 'production') {
@@ -1460,22 +1479,6 @@ app.use((err, req, res, next) => {
         message: 'Der opstod en serverfejl',
         error: process.env.NODE_ENV === 'production' ? {} : err.message
     });
-});
-
-// API routes
-const apiRouter = express.Router();
-
-// Root route for API
-apiRouter.get('/', (req, res) => {
-    res.json({ message: 'TapFeed API er kørende' });
-});
-
-// Mount API router
-app.use('/api', apiRouter);
-
-// 404 handler for ukendte endpoints
-app.use('*', (req, res) => {
-    res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 
 module.exports = app;
