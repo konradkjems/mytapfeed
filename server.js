@@ -454,7 +454,7 @@ mongoose.connect(process.env.MONGODB_URI)
 app.use('/api', passwordResetRouter);
 
 // Login endpoint
-app.post('/api/login', async (req, res) => {
+app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
         console.log('Login forsøg for bruger:', username);
