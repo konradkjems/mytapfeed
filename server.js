@@ -85,11 +85,11 @@ if (!app) {
 // CORS konfiguration
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
-        ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk', 'http://localhost:3000', 'http://localhost:3001']
+        ? 'https://my.tapfeed.dk'
         : ['http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie', 'X-CSRF-Token', 'X-Requested-With', 'Accept-Version', 'Content-Length', 'Content-MD5', 'Date', 'X-Api-Version']
 }));
 
 app.use(express.json());
@@ -270,15 +270,15 @@ passport.use('google-business', new GoogleStrategy({
     }
 }));
 
-// Debug middleware
+// Debug middleware - tilføj før andre routes
 app.use((req, res, next) => {
-    console.log('Request:', {
+    console.log('Indkommende request:', {
         method: req.method,
-        path: req.path,
-        sessionId: req.sessionID,
-        userId: req.session?.userId,
-        body: req.body,
-        user: req.user
+        url: req.url,
+        origin: req.headers.origin,
+        host: req.headers.host,
+        cookie: req.headers.cookie,
+        timestamp: new Date().toISOString()
     });
     next();
 });
