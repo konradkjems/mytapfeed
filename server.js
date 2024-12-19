@@ -84,12 +84,13 @@ if (!app) {
 
 // CORS konfiguration
 app.use(cors({
-    origin: process.env.NODE_ENV === 'production' 
-        ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk', 'http://localhost:3000', 'http://localhost:3001']
+    origin: process.env.NODE_ENV === 'production'
+        ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk']
         : ['http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie'],
+    exposedHeaders: ['Set-Cookie']
 }));
 
 app.use(express.json());
@@ -97,23 +98,24 @@ app.use(express.urlencoded({ extended: true }));
 
 // Session middleware
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'your-secret-key', 
+    secret: process.env.SESSION_SECRET || 'your-secret-key',
     resave: false,
     saveUninitialized: false,
     store: MongoStore.create({
         mongoUrl: process.env.MONGODB_URI,
-        ttl: 24 * 60 * 60, // 1 dag
+        ttl: 24 * 60 * 60,
         autoRemove: 'native',
-        touchAfter: 24 * 3600 // Opdater session hver 24. time
+        touchAfter: 24 * 3600
     }),
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        domain: process.env.NODE_ENV === 'production' ? 'api.tapfeed.dk' : undefined
-    }
-})); 
+        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : undefined
+    },
+    name: 'tapfeed.sid'
+}));
 
 // Initialize Passport and restore authentication state from session
 app.use(passport.initialize());
@@ -164,8 +166,8 @@ app.get('/api/auth/google',
 );
 
 app.get('/api/auth/google/callback', 
-    passport.authenticate('google', { 
-        failureRedirect: process.env.NODE_ENV === 'production' 
+    passport.authenticate('google', {
+        failureRedirect: process.env.NODE_ENV === 'production'
             ? 'https://my.tapfeed.dk/login?error=auth'
             : 'http://localhost:3001/login?error=auth',
         session: true,
@@ -175,26 +177,46 @@ app.get('/api/auth/google/callback',
         console.log('Google callback success:', {
             user: req.user?._id,
             session: req.sessionID,
-            isAuthenticated: req.isAuthenticated()
+            isAuthenticated: req.isAuthenticated(),
+            cookies: req.headers.cookie
         });
 
         // Sikr at session er gemt før redirect
-        req.session.save((err) => {
+        req.session.regenerate((err) => {
             if (err) {
-                console.error('Session gem fejl i callback:', err);
+                console.error('Session regeneration fejl:', err);
                 return res.redirect(process.env.NODE_ENV === 'production'
                     ? 'https://my.tapfeed.dk/login?error=session'
                     : 'http://localhost:3001/login?error=session'
                 );
             }
 
-            // Redirect til dashboard med session cookie
-            const redirectUrl = process.env.NODE_ENV === 'production'
-                ? 'https://my.tapfeed.dk/dashboard'
-                : 'http://localhost:3001/dashboard';
-            
-            console.log('Redirecter til:', redirectUrl, 'med session:', req.sessionID);
-            res.redirect(redirectUrl);
+            // Gem bruger info i den nye session
+            req.session.userId = req.user._id;
+            req.session.isAdmin = req.user.isAdmin;
+
+            req.session.save((err) => {
+                if (err) {
+                    console.error('Session gem fejl i callback:', err);
+                    return res.redirect(process.env.NODE_ENV === 'production'
+                        ? 'https://my.tapfeed.dk/login?error=session'
+                        : 'http://localhost:3001/login?error=session'
+                    );
+                }
+
+                // Redirect til dashboard med session cookie
+                const redirectUrl = process.env.NODE_ENV === 'production'
+                    ? 'https://my.tapfeed.dk/dashboard'
+                    : 'http://localhost:3001/dashboard';
+
+                console.log('Redirecter til:', redirectUrl, 'med session:', {
+                    sessionId: req.sessionID,
+                    userId: req.session.userId,
+                    cookies: req.headers.cookie
+                });
+
+                res.redirect(redirectUrl);
+            });
         });
     }
 );
