@@ -219,6 +219,51 @@ passport.use('google-business', new GoogleStrategy({
         'email',
         'https://www.googleapis.com/auth/business.manage'
     ]
+}, async function(accessToken, refreshToken, profile, cb) {
+    try {
+        console.log('Google Business OAuth callback:', {
+            accessToken: accessToken?.substring(0, 20) + '...',
+            hasRefreshToken: !!refreshToken,
+            profileId: profile.id,
+            email: profile.emails[0].value
+        });
+
+        // Find bruger baseret på session eller email
+        let user;
+        if (this.req && this.req.session && this.req.session.userId) {
+            user = await User.findById(this.req.session.userId);
+        }
+        if (!user) {
+            user = await User.findOne({ email: profile.emails[0].value });
+        }
+        
+        if (!user) {
+            user = new User({
+                username: profile.displayName.toLowerCase().replace(/\s+/g, '_'),
+                email: profile.emails[0].value,
+                password: 'google-auth-' + Math.random().toString(36).slice(-8),
+                googleId: profile.id,
+                googleAccessToken: accessToken,
+                googleRefreshToken: refreshToken
+            });
+            await user.save();
+            console.log('Ny bruger oprettet med Google Business:', user._id);
+        } else {
+            // Opdater tokens
+            user.googleAccessToken = accessToken;
+            user.googleRefreshToken = refreshToken;
+            await user.save();
+            console.log('Eksisterende bruger opdateret med nye tokens:', user._id);
+        }
+        
+        return cb(null, user);
+    } catch (error) {
+        console.error('Fejl i Google Business OAuth callback:', {
+            error: error.message,
+            stack: error.stack
+        });
+        return cb(error, null);
+    }
 }));
 
 // Debug middleware
