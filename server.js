@@ -166,37 +166,34 @@ app.get('/api/auth/google',
 app.get('/api/auth/google/callback', 
     passport.authenticate('google', { 
         failureRedirect: process.env.NODE_ENV === 'production' 
-            ? 'https://my.tapfeed.dk/login'
-            : 'http://localhost:3001/login',
+            ? 'https://my.tapfeed.dk/login?error=auth'
+            : 'http://localhost:3001/login?error=auth',
         session: true,
         failureMessage: true
     }),
     function(req, res) {
         console.log('Google callback success:', {
             user: req.user?._id,
-            session: req.sessionID
+            session: req.sessionID,
+            isAuthenticated: req.isAuthenticated()
         });
 
-        // Gem bruger info i session
-        req.session.userId = req.user._id;
-        req.session.isAdmin = req.user.isAdmin;
-
-        // Gem session explicit før redirect
+        // Sikr at session er gemt før redirect
         req.session.save((err) => {
             if (err) {
-                console.error('Session save error:', err);
+                console.error('Session gem fejl i callback:', err);
                 return res.redirect(process.env.NODE_ENV === 'production'
                     ? 'https://my.tapfeed.dk/login?error=session'
                     : 'http://localhost:3001/login?error=session'
                 );
             }
 
-            // Redirect til dashboard
+            // Redirect til dashboard med session cookie
             const redirectUrl = process.env.NODE_ENV === 'production'
                 ? 'https://my.tapfeed.dk/dashboard'
                 : 'http://localhost:3001/dashboard';
             
-            console.log('Redirecting to:', redirectUrl);
+            console.log('Redirecter til:', redirectUrl, 'med session:', req.sessionID);
             res.redirect(redirectUrl);
         });
     }
@@ -224,10 +221,11 @@ passport.use(new GoogleStrategy({
 },
 async function(accessToken, refreshToken, profile, cb) {
     try {
-        console.log('Google OAuth callback received:', {
+        console.log('Google OAuth callback modtaget:', {
             profileId: profile.id,
             email: profile.emails[0].value,
-            displayName: profile.displayName
+            displayName: profile.displayName,
+            sessionID: this.req?.sessionID
         });
 
         let user = await User.findOne({ 
@@ -238,32 +236,50 @@ async function(accessToken, refreshToken, profile, cb) {
         });
         
         if (!user) {
-            console.log('Creating new user from Google auth');
+            console.log('Opretter ny bruger fra Google auth');
             user = new User({
                 username: profile.displayName.toLowerCase().replace(/\s+/g, '_'),
                 email: profile.emails[0].value,
                 password: 'google-auth-' + Math.random().toString(36).slice(-8),
                 googleId: profile.id,
-                profileImage: profile.photos?.[0]?.value
+                profileImage: profile.photos?.[0]?.value,
+                isAdmin: false,
+                isBlocked: false
             });
             await user.save();
-            console.log('New user created:', user._id);
+            console.log('Ny bruger oprettet:', user._id);
         } else {
-            console.log('Existing user found:', user._id);
-            // Opdater eksisterende bruger med Google info hvis nødvendigt
+            console.log('Eksisterende bruger fundet:', user._id);
             if (!user.googleId) {
                 user.googleId = profile.id;
                 if (profile.photos?.[0]?.value && !user.profileImage) {
                     user.profileImage = profile.photos[0].value;
                 }
                 await user.save();
-                console.log('Updated existing user with Google info');
+                console.log('Opdateret eksisterende bruger med Google info');
             }
+        }
+
+        // Gem bruger ID i session
+        if (this.req && this.req.session) {
+            this.req.session.userId = user._id;
+            this.req.session.isAdmin = user.isAdmin;
+            
+            // Gem session explicit
+            await new Promise((resolve, reject) => {
+                this.req.session.save((err) => {
+                    if (err) {
+                        console.error('Session gem fejl:', err);
+                        reject(err);
+                    }
+                    resolve();
+                });
+            });
         }
         
         return cb(null, user);
     } catch (error) {
-        console.error('Error in Google authentication:', error);
+        console.error('Fejl i Google authentication:', error);
         return cb(error, null);
     }
 }));
