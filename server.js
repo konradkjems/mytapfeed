@@ -164,11 +164,16 @@ app.get('/api/auth/google',
 
 app.get('/api/auth/google/callback',
     passport.authenticate('google', { 
-        failureRedirect: '/login',
-        session: true
+        failureRedirect: process.env.NODE_ENV === 'production' 
+            ? 'https://my.tapfeed.dk/login'
+            : 'http://localhost:3001/login'
     }),
-    (req, res) => {
-        res.redirect('/');
+    function(req, res) {
+        req.session.userId = req.user._id;
+        res.redirect(process.env.NODE_ENV === 'production'
+            ? 'https://my.tapfeed.dk/dashboard'
+            : 'http://localhost:3001/dashboard'
+        );
     }
 );
 
@@ -188,7 +193,7 @@ passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.NODE_ENV === 'production'
-        ? "https://my.tapfeed.dk/api/auth/google/callback"
+        ? "https://api.tapfeed.dk/api/auth/google/callback"
         : "http://localhost:3000/api/auth/google/callback"
 },
 async function(accessToken, refreshToken, profile, cb) {
@@ -289,10 +294,17 @@ app.get('/api/auth/google',
 );
 
 app.get('/api/auth/google/callback', 
-    passport.authenticate('google', { failureRedirect: 'http://localhost:3001/login' }),
+    passport.authenticate('google', { 
+        failureRedirect: process.env.NODE_ENV === 'production' 
+            ? 'https://my.tapfeed.dk/login'
+            : 'http://localhost:3001/login'
+    }),
     function(req, res) {
         req.session.userId = req.user._id;
-        res.redirect('http://localhost:3001/dashboard');
+        res.redirect(process.env.NODE_ENV === 'production'
+            ? 'https://my.tapfeed.dk/dashboard'
+            : 'http://localhost:3001/dashboard'
+        );
     }
 );
 
