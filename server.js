@@ -158,7 +158,8 @@ app.get('/api/auth/status', (req, res) => {
 
 app.get('/api/auth/google',
     passport.authenticate('google', { 
-        scope: ['profile', 'email']
+        scope: ['profile', 'email'],
+        prompt: 'select_account'
     })
 );
 
@@ -166,14 +167,37 @@ app.get('/api/auth/google/callback',
     passport.authenticate('google', { 
         failureRedirect: process.env.NODE_ENV === 'production' 
             ? 'https://my.tapfeed.dk/login'
-            : 'http://localhost:3001/login'
+            : 'http://localhost:3001/login',
+        failureMessage: true
     }),
     function(req, res) {
+        // Log authentication success
+        console.log('Google authentication successful:', {
+            userId: req.user?._id,
+            email: req.user?.email,
+            sessionId: req.sessionID
+        });
+
+        // Gem bruger info i session
         req.session.userId = req.user._id;
-        res.redirect(process.env.NODE_ENV === 'production'
-            ? 'https://my.tapfeed.dk/dashboard'
-            : 'http://localhost:3001/dashboard'
-        );
+        req.session.isAdmin = req.user.isAdmin;
+        
+        // Gem session explicit før redirect
+        req.session.save((err) => {
+            if (err) {
+                console.error('Session save error:', err);
+                return res.redirect(process.env.NODE_ENV === 'production'
+                    ? 'https://my.tapfeed.dk/login?error=session'
+                    : 'http://localhost:3001/login?error=session'
+                );
+            }
+            
+            // Redirect til dashboard efter vellykket login
+            res.redirect(process.env.NODE_ENV === 'production'
+                ? 'https://my.tapfeed.dk/dashboard'
+                : 'http://localhost:3001/dashboard'
+            );
+        });
     }
 );
 
@@ -194,24 +218,46 @@ passport.use(new GoogleStrategy({
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.NODE_ENV === 'production'
         ? "https://api.tapfeed.dk/api/auth/google/callback"
-        : "http://localhost:3000/api/auth/google/callback"
+        : "http://localhost:3000/api/auth/google/callback",
+    proxy: true
 },
 async function(accessToken, refreshToken, profile, cb) {
     try {
+        console.log('Google OAuth callback received:', {
+            profileId: profile.id,
+            email: profile.emails[0].value,
+            displayName: profile.displayName
+        });
+
         let user = await User.findOne({ email: profile.emails[0].value });
         
         if (!user) {
+            console.log('Creating new user from Google auth');
             user = new User({
                 username: profile.displayName.toLowerCase().replace(/\s+/g, '_'),
                 email: profile.emails[0].value,
                 password: 'google-auth-' + Math.random().toString(36).slice(-8),
-                googleId: profile.id
+                googleId: profile.id,
+                profileImage: profile.photos?.[0]?.value
             });
             await user.save();
+            console.log('New user created:', user._id);
+        } else {
+            console.log('Existing user found:', user._id);
+            // Opdater eksisterende bruger med Google info hvis nødvendigt
+            if (!user.googleId) {
+                user.googleId = profile.id;
+                if (profile.photos?.[0]?.value && !user.profileImage) {
+                    user.profileImage = profile.photos[0].value;
+                }
+                await user.save();
+                console.log('Updated existing user with Google info');
+            }
         }
         
         return cb(null, user);
     } catch (error) {
+        console.error('Error in Google authentication:', error);
         return cb(error, null);
     }
 }));
