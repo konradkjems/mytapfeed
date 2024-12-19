@@ -1440,40 +1440,18 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
 // Konfigurer app indstillinger
 app.set('trust proxy', 1);
 
-// 404 handler for ukendte endpoints
-app.use('*', (req, res) => {
-    res.status(404).json({ message: 'Endpoint ikke fundet' });
-});
-
-// Tilføj denne linje i stedet, lige før module.exports
-if (process.env.NODE_ENV !== 'production') {
-    const port = process.env.PORT || 3000;
-    app.listen(port, () => {
-        console.log(`Development server kører på port ${port}`);
-    });
-} else {
-    console.log('Server starter i production mode');
-    const port = process.env.PORT || 3000;
-    app.listen(port, () => {
-        console.log(`Production server kører på port ${port}`);
-        console.log('CORS origins:', app.get('cors'));
-        console.log('Trust proxy:', app.get('trust proxy'));
-    });
-}
-
-// Tilføj error handling middleware
+// Error handling middleware skal være før 404 handler
 app.use((err, req, res, next) => {
-    console.error('Server fejl:', {
-        message: err.message,
-        stack: err.stack,
-        path: req.path,
-        method: req.method
-    });
-    
+    console.error('Server fejl:', err);
     res.status(500).json({
         message: 'Der opstod en serverfejl',
         error: process.env.NODE_ENV === 'production' ? {} : err.message
     });
+});
+
+// 404 handler skal være sidste middleware
+app.use((req, res) => {
+    res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 
 module.exports = app;
