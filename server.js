@@ -1462,13 +1462,19 @@ app.use((err, req, res, next) => {
     });
 });
 
+// API routes
+const apiRouter = express.Router();
+
 // Root route for API
-app.get('/api', (req, res) => {
+apiRouter.get('/', (req, res) => {
     res.json({ message: 'TapFeed API er kørende' });
 });
 
+// Mount API router
+app.use('/api', apiRouter);
+
 // 404 handler for ukendte endpoints
-app.use('/api/*', (req, res) => {
+app.use('*', (req, res) => {
     res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 

@@ -19,7 +19,8 @@
         },
         {
             "src": "/(.*)",
-            "dest": "/server.js"
+            "dest": "/server.js",
+            "status": 404
         }
     ],
     "env": {
