@@ -118,6 +118,66 @@ app.use(session({
 app.use(passport.initialize());
 app.use(passport.session());
 
+// Passport configuration
+passport.serializeUser((user, done) => {
+    done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+    try {
+        const user = await User.findById(id);
+        done(null, user);
+    } catch (error) {
+        done(error, null);
+    }
+});
+
+// Basic routes
+app.get('/', (req, res) => {
+    res.json({ message: 'TapFeed API er kørende' });
+});
+
+// Auth routes
+app.get('/api/auth/status', (req, res) => {
+    if (req.isAuthenticated()) {
+        res.json({ 
+            isAuthenticated: true, 
+            user: req.user 
+        });
+    } else {
+        res.json({ 
+            isAuthenticated: false 
+        });
+    }
+});
+
+app.get('/api/auth/google',
+    passport.authenticate('google', { 
+        scope: ['profile', 'email']
+    })
+);
+
+app.get('/api/auth/google/callback',
+    passport.authenticate('google', { 
+        failureRedirect: '/login',
+        session: true
+    }),
+    (req, res) => {
+        res.redirect('/');
+    }
+);
+
+app.post('/api/auth/logout', (req, res) => {
+    req.logout((err) => {
+        if (err) {
+            return res.status(500).json({ 
+                message: 'Der opstod en fejl ved logout' 
+            });
+        }
+        res.json({ message: 'Logget ud' });
+    });
+});
+
 // Google Strategy
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
