@@ -13,7 +13,12 @@ const Category = require('./models/Category');
 const passport = require('passport');
 const GoogleStrategy = require('passport-google-oauth20').Strategy;
 const multer = require('multer');
-const upload = multer({ dest: 'uploads/' });
+const upload = multer({ 
+    storage: multer.memoryStorage(),
+    limits: {
+        fileSize: 5 * 1024 * 1024 // begrænser upload størrelse til 5MB
+    }
+});
 const cloudinary = require('./config/cloudinary');
 const fs = require('fs');
 const util = require('util');
@@ -676,29 +681,28 @@ app.post('/api/user/profile-image', authenticateToken, upload.single('image'), a
             return res.status(400).json({ message: 'Ingen fil uploadet' });
         }
 
-        // Upload til Cloudinary
-        const result = await cloudinary.uploader.upload(req.file.path, {
+        // Upload buffer direkte til Cloudinary
+        const result = await cloudinary.uploader.upload_stream({
             folder: 'profile-images',
-            width: 300,
-            height: 300,
-            crop: 'fill',
-            gravity: 'face'
-        });
+            transformation: [
+                { width: 300, height: 300, crop: 'fill' }
+            ]
+        }).end(req.file.buffer);
 
-        // Slet den midlertidige fil
-        await unlinkFile(req.file.path);
-
-        // Opdater brugerens profilbillede URL i databasen
+        // Opdater bruger med nyt billede URL
         const user = await User.findByIdAndUpdate(
             req.session.userId,
             { profileImage: result.secure_url },
             { new: true }
         ).select('-password');
 
-        res.json(user);
+        res.json({
+            message: 'Profilbillede opdateret',
+            user
+        });
     } catch (error) {
         console.error('Fejl ved upload af profilbillede:', error);
-        res.status(500).json({ message: 'Der opstod en fejl ved upload af billede' });
+        res.status(500).json({ message: 'Der opstod en serverfejl' });
     }
 });
 
