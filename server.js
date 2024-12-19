@@ -1451,6 +1451,14 @@ if (process.env.NODE_ENV !== 'production') {
     app.listen(port, () => {
         console.log(`Development server kører på port ${port}`);
     });
+} else {
+    console.log('Server starter i production mode');
+    const port = process.env.PORT || 3000;
+    app.listen(port, () => {
+        console.log(`Production server kører på port ${port}`);
+        console.log('CORS origins:', app.get('cors'));
+        console.log('Trust proxy:', app.get('trust proxy'));
+    });
 }
 
 // Tilføj error handling middleware
