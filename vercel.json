@@ -4,6 +4,13 @@
         {
             "src": "server.js",
             "use": "@vercel/node"
+        },
+        {
+            "src": "frontend/package.json",
+            "use": "@vercel/static-build",
+            "config": {
+                "distDir": "build"
+            }
         }
     ],
     "routes": [
@@ -12,8 +19,20 @@
             "dest": "server.js"
         },
         {
+            "src": "/static/(.*)",
+            "dest": "frontend/build/static/$1"
+        },
+        {
+            "src": "/favicon.ico",
+            "dest": "frontend/build/favicon.ico"
+        },
+        {
+            "src": "/manifest.json",
+            "dest": "frontend/build/manifest.json"
+        },
+        {
             "src": "/(.*)",
-            "dest": "server.js"
+            "dest": "frontend/build/index.html"
         }
     ],
     "env": {

@@ -27,6 +27,7 @@ const axios = require('axios');
 const NodeCache = require('node-cache');
 const rateLimit = require('express-rate-limit');
 const google = require('googleapis');
+const path = require('path');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -91,6 +92,9 @@ app.use(cors({
     allowedHeaders: ['Content-Type', 'Authorization', 'Access-Control-Allow-Origin', 'Cookie']
 }));
 
+// Serve static files fra frontend build mappen
+app.use(express.static(path.join(__dirname, 'frontend/build')));
+
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
@@ -133,7 +137,7 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // Basic routes
-app.get('/', (req, res) => {
+app.get('/api', (req, res) => {
     res.json({ message: 'TapFeed API er kørende' });
 });
 
@@ -1459,6 +1463,11 @@ app.use((err, req, res, next) => {
         message: 'Der opstod en serverfejl',
         error: process.env.NODE_ENV === 'production' ? {} : err.message
     });
+});
+
+// Catch all route - sender frontend app'en for alle ikke-API routes
+app.get('*', (req, res) => {
+    res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
 });
 
 module.exports = app;
