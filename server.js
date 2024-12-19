@@ -970,14 +970,21 @@ app.get('/:standerId', async (req, res) => {
             console.log('Klik registreret for stand:', {
                 standerId: stand.standerId,
                 newClickCount: stand.clicks,
-                timestamp: clickData.timestamp
+                timestamp: clickData.timestamp,
+                redirectUrl: stand.redirectUrl
             });
         } catch (saveError) {
             console.error('Fejl ved gemning af klik:', saveError);
         }
 
+        // Sikr at redirectUrl har http:// eller https://
+        let redirectUrl = stand.redirectUrl;
+        if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
+            redirectUrl = 'https://' + redirectUrl;
+        }
+
         // Redirect direkte
-        res.redirect(stand.redirectUrl);
+        res.redirect(redirectUrl);
     } catch (error) {
         console.error('Fejl ved redirect:', error);
         res.status(500).send('Der opstod en serverfejl');
