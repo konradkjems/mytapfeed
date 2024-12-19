@@ -85,7 +85,7 @@ if (!app) {
 // CORS konfiguration
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
-        ? ['https://my.tapfeed.dk']
+        ? ['https://my.tapfeed.dk', 'https://mytapfeed.vercel.app']
         : 'http://localhost:3001',
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -111,7 +111,7 @@ app.use(session({
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : undefined
+        domain: process.env.NODE_ENV === 'production' ? 'my.tapfeed.dk' : undefined
     }
 })); 
 
