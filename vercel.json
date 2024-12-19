@@ -9,7 +9,7 @@
             "src": "frontend/package.json",
             "use": "@vercel/static-build",
             "config": {
-                "distDir": "build"
+                "distDir": "frontend/build"
             }
         }
     ],
@@ -19,20 +19,24 @@
             "dest": "server.js"
         },
         {
-            "src": "/static/(.*)",
-            "dest": "frontend/build/static/$1"
+            "src": "^/static/(.*)",
+            "dest": "/frontend/build/static/$1"
         },
         {
-            "src": "/favicon.ico",
-            "dest": "frontend/build/favicon.ico"
+            "src": "^/favicon.ico",
+            "dest": "/frontend/build/favicon.ico"
         },
         {
-            "src": "/manifest.json",
-            "dest": "frontend/build/manifest.json"
+            "src": "^/manifest.json",
+            "dest": "/frontend/build/manifest.json"
+        },
+        {
+            "src": "^/logo(.*).png",
+            "dest": "/frontend/build/logo$1.png"
         },
         {
             "src": "/(.*)",
-            "dest": "frontend/build/index.html"
+            "dest": "/frontend/build/index.html"
         }
     ],
     "env": {
