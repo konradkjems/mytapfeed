@@ -85,8 +85,8 @@ if (!app) {
 // CORS konfiguration
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
-        ? ['https://my.tapfeed.dk', 'http://localhost:3001']
-        : 'http://localhost:3001',
+        ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk', 'http://localhost:3000', 'http://localhost:3001']
+        : ['http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
     allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie']

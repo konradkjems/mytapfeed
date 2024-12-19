@@ -18,6 +18,10 @@
             }
         },
         {
+            "src": "/auth/(.*)",
+            "dest": "/server.js"
+        },
+        {
             "src": "/(.*)",
             "dest": "/server.js"
         }
