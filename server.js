@@ -1131,8 +1131,8 @@ app.get('/api/business/google-reviews', authenticateToken, async (req, res) => {
             return res.status(500).json({ message: 'Google Maps API nøgle er ikke konfigureret' });
         }
 
-        // Hent virksomhedsdetaljer
-        const placeDetailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${user.googlePlaceId}&fields=name,rating,user_ratings_total,reviews&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+        // Hent virksomhedsdetaljer med flere felter
+        const placeDetailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${user.googlePlaceId}&fields=name,rating,user_ratings_total,reviews,formatted_address,formatted_phone_number,website,opening_hours,types&key=${process.env.GOOGLE_MAPS_API_KEY}`;
         console.log('Kalder Google Places API:', placeDetailsUrl);
 
         const placeDetailsResponse = await axios.get(placeDetailsUrl);
@@ -1150,7 +1150,12 @@ app.get('/api/business/google-reviews', authenticateToken, async (req, res) => {
                 name: placeDetails.name,
                 rating: placeDetails.rating,
                 user_ratings_total: placeDetails.user_ratings_total,
-                place_id: user.googlePlaceId
+                place_id: user.googlePlaceId,
+                address: placeDetails.formatted_address,
+                phone: placeDetails.formatted_phone_number,
+                website: placeDetails.website,
+                opening_hours: placeDetails.opening_hours,
+                types: placeDetails.types
             },
             reviews: placeDetails.reviews || []
         });
