@@ -70,7 +70,8 @@ const port = 3000;
 // CORS konfiguration
 app.use(cors({
     origin: [
-        'https://mytapfeed.vercel.app',
+        'https://my.tapfeed.dk',
+        'https://tapfeed.vercel.app',
         'http://localhost:3001'  // for udvikling
     ],
     credentials: true,
@@ -122,7 +123,9 @@ app.use(passport.session());
 passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
-    callbackURL: "https://my.tapfeed.dk/api/auth/google/callback"
+    callbackURL: process.env.NODE_ENV === 'production'
+        ? "https://my.tapfeed.dk/api/auth/google/callback"
+        : "http://localhost:3000/api/auth/google/callback"
 },
 async function(accessToken, refreshToken, profile, cb) {
     try {
