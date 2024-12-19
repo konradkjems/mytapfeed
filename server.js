@@ -163,25 +163,24 @@ app.get('/api/auth/google',
     })
 );
 
-app.get('/api/auth/google/callback',
+app.get('/api/auth/google/callback', 
     passport.authenticate('google', { 
         failureRedirect: process.env.NODE_ENV === 'production' 
             ? 'https://my.tapfeed.dk/login'
             : 'http://localhost:3001/login',
+        session: true,
         failureMessage: true
     }),
     function(req, res) {
-        // Log authentication success
-        console.log('Google authentication successful:', {
-            userId: req.user?._id,
-            email: req.user?.email,
-            sessionId: req.sessionID
+        console.log('Google callback success:', {
+            user: req.user?._id,
+            session: req.sessionID
         });
 
         // Gem bruger info i session
         req.session.userId = req.user._id;
         req.session.isAdmin = req.user.isAdmin;
-        
+
         // Gem session explicit før redirect
         req.session.save((err) => {
             if (err) {
@@ -191,12 +190,14 @@ app.get('/api/auth/google/callback',
                     : 'http://localhost:3001/login?error=session'
                 );
             }
-            
-            // Redirect til dashboard efter vellykket login
-            res.redirect(process.env.NODE_ENV === 'production'
+
+            // Redirect til dashboard
+            const redirectUrl = process.env.NODE_ENV === 'production'
                 ? 'https://my.tapfeed.dk/dashboard'
-                : 'http://localhost:3001/dashboard'
-            );
+                : 'http://localhost:3001/dashboard';
+            
+            console.log('Redirecting to:', redirectUrl);
+            res.redirect(redirectUrl);
         });
     }
 );
@@ -229,7 +230,12 @@ async function(accessToken, refreshToken, profile, cb) {
             displayName: profile.displayName
         });
 
-        let user = await User.findOne({ email: profile.emails[0].value });
+        let user = await User.findOne({ 
+            $or: [
+                { email: profile.emails[0].value },
+                { googleId: profile.id }
+            ]
+        });
         
         if (!user) {
             console.log('Creating new user from Google auth');
