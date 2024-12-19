@@ -1462,9 +1462,14 @@ app.use((err, req, res, next) => {
     });
 });
 
-// Catch all route - sender frontend app'en for alle ikke-API routes
-app.get('*', (req, res) => {
-    res.sendFile(path.join(__dirname, '../frontend/build', 'index.html'));
+// Root route for API
+app.get('/', (req, res) => {
+    res.json({ message: 'TapFeed API er kørende' });
+});
+
+// 404 handler for ukendte endpoints
+app.use((req, res) => {
+    res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 
 module.exports = app;
