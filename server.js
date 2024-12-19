@@ -134,6 +134,10 @@ passport.deserializeUser(async (id, done) => {
 });
 
 // Basic routes
+app.get('/', (req, res) => {
+    res.json({ message: 'Velkommen til TapFeed API' });
+});
+
 app.get('/api', (req, res) => {
     res.json({ message: 'TapFeed API er kørende' });
 });
