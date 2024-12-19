@@ -946,67 +946,103 @@ app.put('/api/admin/users/:userId/unblock', authenticateToken, isAdmin, async (r
     }
 });
 
-// Category endpoints
-app.get('/api/categories', authenticateToken, async (req, res) => {
+// Category routes
+app.get('/api/categories', async (req, res) => {
     try {
-        const categories = await Category.find({ userId: req.session.userId })
-            .sort('order');
+        if (!req.isAuthenticated()) {
+            return res.status(401).json({ message: 'Ikke autoriseret' });
+        }
+
+        const categories = await Category.find({ userId: req.user._id }).sort('order');
         res.json(categories);
     } catch (error) {
         console.error('Fejl ved hentning af kategorier:', error);
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
+        res.status(500).json({ message: 'Der opstod en fejl ved hentning af kategorier' });
     }
 });
 
-app.post('/api/categories', authenticateToken, async (req, res) => {
+app.post('/api/categories', async (req, res) => {
     try {
+        if (!req.isAuthenticated()) {
+            return res.status(401).json({ message: 'Ikke autoriseret' });
+        }
+
+        const { name, description } = req.body;
+        if (!name) {
+            return res.status(400).json({ message: 'Kategorinavn er påkrævet' });
+        }
+
         const category = new Category({
-            ...req.body,
-            userId: req.session.userId
+            name,
+            description,
+            userId: req.user._id
         });
+
         await category.save();
         res.status(201).json(category);
     } catch (error) {
         console.error('Fejl ved oprettelse af kategori:', error);
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
+        res.status(500).json({ message: 'Der opstod en fejl ved oprettelse af kategori' });
     }
 });
 
-app.put('/api/categories/:id', authenticateToken, async (req, res) => {
+app.put('/api/categories/:id', async (req, res) => {
     try {
-        const category = await Category.findOneAndUpdate(
-            { _id: req.params.id, userId: req.session.userId },
-            req.body,
-            { new: true }
-        );
+        if (!req.isAuthenticated()) {
+            return res.status(401).json({ message: 'Ikke autoriseret' });
+        }
+
+        const { name, description } = req.body;
+        if (!name) {
+            return res.status(400).json({ message: 'Kategorinavn er påkrævet' });
+        }
+
+        const category = await Category.findOne({
+            _id: req.params.id,
+            userId: req.user._id
+        });
+
         if (!category) {
             return res.status(404).json({ message: 'Kategori ikke fundet' });
         }
+
+        category.name = name;
+        category.description = description;
+        await category.save();
+
         res.json(category);
     } catch (error) {
         console.error('Fejl ved opdatering af kategori:', error);
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
+        res.status(500).json({ message: 'Der opstod en fejl ved opdatering af kategori' });
     }
 });
 
-app.delete('/api/categories/:id', authenticateToken, async (req, res) => {
+app.delete('/api/categories/:id', async (req, res) => {
     try {
-        const category = await Category.findOneAndDelete({
+        if (!req.isAuthenticated()) {
+            return res.status(401).json({ message: 'Ikke autoriseret' });
+        }
+
+        const category = await Category.findOne({
             _id: req.params.id,
-            userId: req.session.userId
+            userId: req.user._id
         });
+
         if (!category) {
             return res.status(404).json({ message: 'Kategori ikke fundet' });
         }
-        // Opdater alle stands i denne kategori til ingen kategori
+
+        // Fjern kategori reference fra alle stands
         await Stand.updateMany(
-            { categoryId: req.params.id },
+            { userId: req.user._id, categoryId: category._id },
             { $unset: { categoryId: "" } }
         );
+
+        await category.deleteOne();
         res.json({ message: 'Kategori slettet' });
     } catch (error) {
         console.error('Fejl ved sletning af kategori:', error);
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
+        res.status(500).json({ message: 'Der opstod en fejl ved sletning af kategori' });
     }
 });
 
