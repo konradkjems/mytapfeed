@@ -355,36 +355,29 @@ app.get('/api/auth/google-business/callback', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        const user = await User.findOne({ username });
-
-        if (!user) {
-            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
-        }
-
-        const isValidPassword = await bcrypt.compare(password, user.password);
-        if (!isValidPassword) {
-            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
-        }
-
-        // Gem bruger info i session
-        req.session.userId = user._id;
-        req.session.isAdmin = user.isAdmin;
         
-        // Gem session explicit
-        await new Promise((resolve, reject) => {
-            req.session.save((err) => {
-                if (err) reject(err);
-                resolve();
-            });
-        });
+        // Find bruger
+        const user = await User.findOne({ username });
+        if (!user) {
+            return res.status(401).json({ message: 'Forkert brugernavn eller adgangskode' });
+        }
+
+        // Verificer password
+        const validPassword = await bcrypt.compare(password, user.password);
+        if (!validPassword) {
+            return res.status(401).json({ message: 'Forkert brugernavn eller adgangskode' });
+        }
+
+        // Gem bruger ID i session
+        req.session.userId = user._id;
+
+        // Send brugerdata tilbage (uden password)
+        const userWithoutPassword = user.toObject();
+        delete userWithoutPassword.password;
 
         res.json({
             message: 'Login succesfuldt',
-            user: {
-                id: user._id,
-                username: user.username,
-                isAdmin: user.isAdmin
-            }
+            user: userWithoutPassword
         });
     } catch (error) {
         console.error('Login fejl:', error);
@@ -442,8 +435,12 @@ const requireAuth = (req, res, next) => {
 
 // MongoDB connection
 mongoose.connect(process.env.MONGODB_URI)
-    .then(() => console.log('MongoDB forbindelse etableret'))
-    .catch(err => console.error('MongoDB forbindelsesfejl:', err));
+    .then(() => {
+        console.log('MongoDB forbindelse etableret');
+    })
+    .catch(err => {
+        console.error('MongoDB forbindelsesfejl:', err);
+    });
 
 // Routes
 app.use('/api', passwordResetRouter);
