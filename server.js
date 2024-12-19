@@ -212,60 +212,13 @@ passport.use('google-business', new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.NODE_ENV === 'production'
-        ? "https://api.tapfeed.dk/auth/google-business/callback"
+        ? "https://api.tapfeed.dk/api/auth/google-business/callback"
         : "http://localhost:3000/api/auth/google-business/callback",
     scope: [
         'profile', 
-        'email', 
-        'https://www.googleapis.com/auth/business.manage',
-        'https://www.googleapis.com/auth/plus.business.manage',
-        'https://www.googleapis.com/auth/business.location.readonly'
+        'email',
+        'https://www.googleapis.com/auth/business.manage'
     ]
-}, async function(accessToken, refreshToken, profile, cb) {
-    try {
-        console.log('Google Business OAuth callback:', {
-            accessToken: accessToken?.substring(0, 20) + '...',
-            hasRefreshToken: !!refreshToken,
-            profileId: profile.id,
-            email: profile.emails[0].value
-        });
-
-        // Find bruger baseret på session eller email
-        let user;
-        if (this.req && this.req.session && this.req.session.userId) {
-            user = await User.findById(this.req.session.userId);
-        }
-        if (!user) {
-            user = await User.findOne({ email: profile.emails[0].value });
-        }
-        
-        if (!user) {
-            user = new User({
-                username: profile.displayName.toLowerCase().replace(/\s+/g, '_'),
-                email: profile.emails[0].value,
-                password: 'google-auth-' + Math.random().toString(36).slice(-8),
-                googleId: profile.id,
-                googleAccessToken: accessToken,
-                googleRefreshToken: refreshToken
-            });
-            await user.save();
-            console.log('Ny bruger oprettet med Google Business:', user._id);
-        } else {
-            // Opdater tokens
-            user.googleAccessToken = accessToken;
-            user.googleRefreshToken = refreshToken;
-            await user.save();
-            console.log('Eksisterende bruger opdateret med nye tokens:', user._id);
-        }
-        
-        return cb(null, user);
-    } catch (error) {
-        console.error('Fejl i Google Business OAuth callback:', {
-            error: error.message,
-            stack: error.stack
-        });
-        return cb(error, null);
-    }
 }));
 
 // Debug middleware
@@ -1465,12 +1418,12 @@ app.use((err, req, res, next) => {
 });
 
 // Root route for API
-app.get('/', (req, res) => {
+app.get('/api', (req, res) => {
     res.json({ message: 'TapFeed API er kørende' });
 });
 
 // 404 handler for ukendte endpoints
-app.use((req, res) => {
+app.use('/api/*', (req, res) => {
     res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 
