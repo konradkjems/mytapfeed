@@ -663,10 +663,11 @@ app.put('/api/stands/:id', requireAuth, async (req, res) => {
                     standerId,
                     redirectUrl,
                     productType,
+                    name: req.body.name,
                     updatedAt: new Date()
                 }
             },
-            { new: true } // Returnerer det opdaterede dokument
+            { new: true }
         );
 
         if (!updatedStand) {
