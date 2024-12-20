@@ -7,6 +7,7 @@ const mongoose = require('mongoose');
 const { ObjectId } = mongoose.Types;
 const User = require('./models/User');
 const Stand = require('./models/Stand');
+const ResetToken = require('./models/ResetToken');
 const passwordResetRouter = require('./routes/passwordReset');
 const MongoStore = require('connect-mongo');
 const Category = require('./models/Category');
@@ -496,7 +497,7 @@ mongoose.connect(process.env.MONGODB_URI)
     });
 
 // Routes
-app.use('/api', passwordResetRouter);
+app.use('/', passwordResetRouter);
 
 // Login endpoint
 app.post('/api/auth/login', async (req, res) => {
