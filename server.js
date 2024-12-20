@@ -1141,7 +1141,10 @@ app.post('/api/business/setup-google-maps', authenticateToken, async (req, res) 
                 name: placeDetails.name,
                 rating: placeDetails.rating,
                 user_ratings_total: placeDetails.user_ratings_total,
-                place_id: placeId
+                place_id: placeId,
+                formatted_address: placeDetails.formatted_address,
+                formatted_phone_number: placeDetails.formatted_phone_number,
+                website: placeDetails.website
             },
             reviews: placeDetails.reviews || []
         });
