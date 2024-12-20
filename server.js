@@ -404,31 +404,40 @@ app.get('/api/auth/google-business/callback', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
+        console.log('Login forsøg for bruger:', username);
         
-        // Find bruger
         const user = await User.findOne({ username });
+
         if (!user) {
+            console.log('Bruger ikke fundet:', username);
             return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
         }
 
         const isValidPassword = await bcrypt.compare(password, user.password);
         if (!isValidPassword) {
+            console.log('Ugyldig adgangskode for bruger:', username);
             return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
         }
 
-        // Gem bruger info i session
-        req.session.userId = user._id;
-        req.session.isAdmin = user.isAdmin;
-        
-        // Gem session explicit
-        await new Promise((resolve, reject) => {
-            req.session.save((err) => {
-                if (err) reject(err);
-                resolve();
-            });
+        // Generer tokens
+        const { accessToken, refreshToken } = await generateTokens(user);
+
+        // Sæt cookies
+        res.cookie('accessToken', accessToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 15 * 60 * 1000 // 15 minutter
         });
 
-        res.json({
+        res.cookie('refreshToken', refreshToken, {
+            httpOnly: true,
+            secure: process.env.NODE_ENV === 'production',
+            sameSite: 'strict',
+            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dage
+        });
+
+        res.json({ 
             message: 'Login succesfuldt',
             user: {
                 id: user._id,
@@ -437,8 +446,8 @@ app.post('/api/auth/login', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Login fejl:', error);
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
+        console.error('Login error:', error);
+        res.status(500).json({ message: 'Der opstod en fejl ved login' });
     }
 });
 
@@ -502,58 +511,6 @@ mongoose.connect(process.env.MONGODB_URI)
 // Routes
 app.use('/api', passwordResetRouter);
 app.use('/api/landing-pages', landingPagesRouter);
-
-// Login endpoint
-app.post('/api/auth/login', async (req, res) => {
-    try {
-        const { username, password } = req.body;
-        console.log('Login forsøg for bruger:', username);
-        
-        const user = await User.findOne({ username });
-
-        if (!user) {
-            console.log('Bruger ikke fundet:', username);
-            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
-        }
-
-        const isValidPassword = await bcrypt.compare(password, user.password);
-        if (!isValidPassword) {
-            console.log('Ugyldig adgangskode for bruger:', username);
-            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
-        }
-
-        // Gem bruger info i session
-        req.session.userId = user._id;
-        req.session.username = user.username;
-        req.session.isAdmin = user.isAdmin;
-
-        console.log('Login succesfuldt:', {
-            username: user.username,
-            userId: user._id,
-            sessionId: req.session.id
-        });
-
-        // Gem session før respons sendes
-        req.session.save((err) => {
-            if (err) {
-                console.error('Fejl ved gemning af session:', err);
-                return res.status(500).json({ message: 'Der opstod en fejl under login' });
-            }
-
-            res.json({ 
-                message: 'Login succesfuldt',
-                redirect: '/dashboard',
-                user: {
-                    username: user.username,
-                    isAdmin: user.isAdmin
-                }
-            });
-        });
-    } catch (error) {
-        console.error('Login fejl:', error);
-        res.status(500).json({ message: 'Der opstod en fejl under login' });
-    }
-});
 
 // Register endpoint
 app.post('/api/auth/register', async (req, res) => {
@@ -1796,45 +1753,6 @@ const generateTokens = async (user) => {
 
   return { accessToken, refreshToken };
 };
-
-// Login endpoint
-app.post('/login', async (req, res) => {
-  try {
-    const { email, password } = req.body;
-    const user = await User.findOne({ email });
-
-    if (!user) {
-      return res.status(401).json({ message: 'Forkert email eller adgangskode' });
-    }
-
-    const isValidPassword = await bcrypt.compare(password, user.password);
-    if (!isValidPassword) {
-      return res.status(401).json({ message: 'Forkert email eller adgangskode' });
-    }
-
-    const { accessToken, refreshToken } = await generateTokens(user);
-
-    // Sæt cookies
-    res.cookie('accessToken', accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 15 * 60 * 1000 // 15 minutter
-    });
-
-    res.cookie('refreshToken', refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dage
-    });
-
-    res.json({ accessToken, refreshToken });
-  } catch (error) {
-    console.error('Login error:', error);
-    res.status(500).json({ message: 'Der opstod en fejl ved login' });
-  }
-});
 
 // Refresh token endpoint
 app.post('/refresh-token', async (req, res) => {
