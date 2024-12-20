@@ -14,6 +14,10 @@ const standSchema = new mongoose.Schema({
         required: true,
         unique: true
     },
+    nickname: {
+        type: String,
+        required: false
+    },
     redirectUrl: {
         type: String,
         required: true

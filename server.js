@@ -28,6 +28,7 @@ const NodeCache = require('node-cache');
 const rateLimit = require('express-rate-limit');
 const google = require('googleapis');
 const path = require('path');
+const { Client } = require('@googlemaps/google-maps-services-js');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -624,13 +625,14 @@ app.post('/api/stands', authenticateToken, async (req, res) => {
 app.put('/api/stands/:id', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
-        const { standerId, redirectUrl, productType } = req.body;
+        const { standerId, redirectUrl, productType, nickname } = req.body;
 
         console.log('Modtaget opdateringsanmodning:', {
             id,
             standerId,
             redirectUrl,
             productType,
+            nickname,
             userId: req.session.userId
         });
 
@@ -663,6 +665,7 @@ app.put('/api/stands/:id', requireAuth, async (req, res) => {
                     standerId,
                     redirectUrl,
                     productType,
+                    nickname,
                     updatedAt: new Date()
                 }
             },
@@ -1011,53 +1014,78 @@ app.post('/api/stands/:standId/click', async (req, res) => {
 });
 
 // Google Maps integration endpoints
-app.get('/api/business/google-reviews', authenticateToken, async (req, res) => {
+app.get('/api/business/google-reviews', authenticateToken, googleBusinessLimiter, async (req, res) => {
     try {
         const user = await User.findById(req.session.userId);
-        console.log('Henter anmeldelser for bruger:', {
-            userId: user._id,
-            googlePlaceId: user.googlePlaceId
+        if (!user || !user.googlePlaceId) {
+            return res.status(404).json({ 
+                message: 'Ingen virksomhed tilknyttet',
+                needsAuth: true
+            });
+        }
+
+        // Tjek cache først
+        const cacheKey = `business_${user.googlePlaceId}`;
+        const cachedData = businessCache.get(cacheKey);
+        if (cachedData) {
+            console.log('Returnerer cached virksomhedsdata for:', user.googlePlaceId);
+            return res.json(cachedData);
+        }
+
+        // Opret Google Maps klient
+        const client = new Client({});
+
+        // Hent detaljerede virksomhedsoplysninger
+        const placeDetails = await client.placeDetails({
+            params: {
+                place_id: user.googlePlaceId,
+                key: process.env.GOOGLE_MAPS_API_KEY,
+                fields: [
+                    'name',
+                    'formatted_address',
+                    'formatted_phone_number',
+                    'website',
+                    'rating',
+                    'user_ratings_total',
+                    'reviews'
+                ]
+            }
         });
 
-        if (!user.googlePlaceId) {
-            return res.json({ business: null, reviews: [] });
-        }
-
-        if (!process.env.GOOGLE_MAPS_API_KEY) {
-            console.error('Google Maps API nøgle mangler i miljøvariablerne');
-            return res.status(500).json({ message: 'Google Maps API nøgle er ikke konfigureret' });
-        }
-
-        // Hent virksomhedsdetaljer
-        const placeDetailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${user.googlePlaceId}&fields=name,rating,user_ratings_total,reviews&key=${process.env.GOOGLE_MAPS_API_KEY}`;
-        console.log('Kalder Google Places API:', placeDetailsUrl);
-
-        const placeDetailsResponse = await axios.get(placeDetailsUrl);
-        console.log('Google Places API svar:', placeDetailsResponse.data);
-
-        if (placeDetailsResponse.data.status === 'REQUEST_DENIED') {
-            console.error('Google Places API afviste anmodningen:', placeDetailsResponse.data.error_message);
-            return res.status(500).json({ message: 'Kunne ikke hente data fra Google Maps' });
-        }
-
-        const placeDetails = placeDetailsResponse.data.result;
-        
-        res.json({
+        const responseData = {
             business: {
-                name: placeDetails.name,
-                rating: placeDetails.rating,
-                user_ratings_total: placeDetails.user_ratings_total,
-                place_id: user.googlePlaceId
+                name: placeDetails.data.result.name,
+                formatted_address: placeDetails.data.result.formatted_address,
+                formatted_phone_number: placeDetails.data.result.formatted_phone_number,
+                website: placeDetails.data.result.website,
+                rating: placeDetails.data.result.rating,
+                user_ratings_total: placeDetails.data.result.user_ratings_total
             },
-            reviews: placeDetails.reviews || []
-        });
+            reviews: placeDetails.data.result.reviews || []
+        };
+
+        // Gem i cache
+        businessCache.set(cacheKey, responseData);
+
+        res.json(responseData);
+
     } catch (error) {
-        console.error('Detaljeret fejl ved hentning af Google anmeldelser:', {
+        console.error('Fejl ved hentning af Google Maps data:', {
             error: error.message,
-            stack: error.stack,
-            response: error.response?.data
+            stack: error.stack
         });
-        res.status(500).json({ message: 'Der opstod en fejl ved hentning af anmeldelser' });
+        
+        if (error.response?.status === 401) {
+            return res.status(401).json({
+                message: 'Din Google Business autorisation er udløbet. Log venligst ind igen.',
+                needsAuth: true
+            });
+        }
+
+        res.status(500).json({ 
+            message: 'Der opstod en fejl ved hentning af virksomhedsdata',
+            error: error.message
+        });
     }
 });
 
@@ -1471,6 +1499,82 @@ app.use((req, res) => {
         timestamp: new Date().toISOString()
     });
     res.status(404).json({ message: 'Endpoint ikke fundet' });
+});
+
+// Google Business Reviews endpoint
+app.get('/api/business/google-reviews', authenticateToken, googleBusinessLimiter, async (req, res) => {
+    try {
+        const user = await User.findById(req.session.userId);
+        if (!user || !user.googlePlaceId) {
+            return res.status(404).json({ 
+                message: 'Ingen virksomhed tilknyttet',
+                needsAuth: true
+            });
+        }
+
+        // Tjek cache først
+        const cacheKey = `business_${user.googlePlaceId}`;
+        const cachedData = businessCache.get(cacheKey);
+        if (cachedData) {
+            console.log('Returnerer cached virksomhedsdata for:', user.googlePlaceId);
+            return res.json(cachedData);
+        }
+
+        // Opret Google Maps klient
+        const client = new Client({});
+
+        // Hent detaljerede virksomhedsoplysninger
+        const placeDetails = await client.placeDetails({
+            params: {
+                place_id: user.googlePlaceId,
+                key: process.env.GOOGLE_MAPS_API_KEY,
+                fields: [
+                    'name',
+                    'formatted_address',
+                    'formatted_phone_number',
+                    'website',
+                    'rating',
+                    'user_ratings_total',
+                    'reviews'
+                ]
+            }
+        });
+
+        const responseData = {
+            business: {
+                name: placeDetails.data.result.name,
+                formatted_address: placeDetails.data.result.formatted_address,
+                formatted_phone_number: placeDetails.data.result.formatted_phone_number,
+                website: placeDetails.data.result.website,
+                rating: placeDetails.data.result.rating,
+                user_ratings_total: placeDetails.data.result.user_ratings_total
+            },
+            reviews: placeDetails.data.result.reviews || []
+        };
+
+        // Gem i cache
+        businessCache.set(cacheKey, responseData);
+
+        res.json(responseData);
+
+    } catch (error) {
+        console.error('Fejl ved hentning af Google Maps data:', {
+            error: error.message,
+            stack: error.stack
+        });
+        
+        if (error.response?.status === 401) {
+            return res.status(401).json({
+                message: 'Din Google Business autorisation er udløbet. Log venligst ind igen.',
+                needsAuth: true
+            });
+        }
+
+        res.status(500).json({ 
+            message: 'Der opstod en fejl ved hentning af virksomhedsdata',
+            error: error.message
+        });
+    }
 });
 
 module.exports = app;
