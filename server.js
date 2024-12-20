@@ -85,7 +85,7 @@ if (!app) {
     app = express();
 }
 
-// CORS konfiguration
+// Middleware setup
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
         ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk']
@@ -1547,17 +1547,7 @@ app.use((req, res) => {
     res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 
-// Flyt landing pages endpoints før 404 handler og error handler
-app.get('/api/landing-pages', authenticateToken, async (req, res) => {
-  try {
-    const pages = await LandingPage.find({ userId: req.session.userId });
-    res.json(pages);
-  } catch (error) {
-    console.error('Fejl ved hentning af landing pages:', error);
-    res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing pages' });
-  }
-});
-
+// Landing Pages endpoints
 app.post('/api/landing-pages', authenticateToken, upload.fields([
   { name: 'logo', maxCount: 1 },
   { name: 'backgroundImage', maxCount: 1 }
@@ -1632,6 +1622,16 @@ app.post('/api/landing-pages', authenticateToken, upload.fields([
   } catch (error) {
     console.error('Fejl ved oprettelse af landing page:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved oprettelse af landing page' });
+  }
+});
+
+app.get('/api/landing-pages', authenticateToken, async (req, res) => {
+  try {
+    const pages = await LandingPage.find({ userId: req.session.userId });
+    res.json(pages);
+  } catch (error) {
+    console.error('Fejl ved hentning af landing pages:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing pages' });
   }
 });
 
