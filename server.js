@@ -1623,4 +1623,63 @@ app.get('/api/business/google-reviews', authenticateToken, googleBusinessLimiter
     }
 });
 
+// Bulk upload endpoint
+app.post('/api/stands/bulk', authenticateToken, upload.single('file'), async (req, res) => {
+    try {
+        if (!req.file) {
+            return res.status(400).json({ message: 'Ingen fil uploadet' });
+        }
+
+        // Parse CSV filen
+        const fileContent = req.file.buffer.toString();
+        const rows = fileContent.split('\n');
+        const headers = rows[0].split(',').map(h => h.trim());
+
+        // Valider headers
+        const requiredHeaders = ['standerId', 'redirectUrl'];
+        const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
+        if (missingHeaders.length > 0) {
+            return res.status(400).json({ 
+                message: `Manglende påkrævede kolonner: ${missingHeaders.join(', ')}` 
+            });
+        }
+
+        // Parse og valider hver række
+        const products = [];
+        for (let i = 1; i < rows.length; i++) {
+            if (!rows[i].trim()) continue; // Skip tomme linjer
+            
+            const values = rows[i].split(',').map(v => v.trim());
+            const product = {};
+            
+            headers.forEach((header, index) => {
+                product[header] = values[index];
+            });
+
+            // Valider påkrævede felter
+            if (!product.standerId || !product.redirectUrl) {
+                continue;
+            }
+
+            // Tilføj standard værdier
+            product.productType = product.productType || 'stander';
+            product.userId = req.session.userId;
+
+            products.push(product);
+        }
+
+        // Indsæt produkter i databasen
+        const result = await Stand.insertMany(products);
+
+        res.json({ 
+            message: 'Produkter uploadet succesfuldt',
+            added: result.length
+        });
+
+    } catch (error) {
+        console.error('Fejl ved bulk upload:', error);
+        res.status(500).json({ message: 'Der opstod en fejl ved upload af produkter' });
+    }
+});
+
 module.exports = app;

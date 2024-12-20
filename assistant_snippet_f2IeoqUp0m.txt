@@ -1,0 +1,3 @@
+CLOUDINARY_CLOUD_NAME=dit-cloud-name
+CLOUDINARY_API_KEY=din-api-key
+CLOUDINARY_API_SECRET=din-api-secret 
