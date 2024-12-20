@@ -1059,7 +1059,8 @@ app.get('/api/business/google-reviews', authenticateToken, googleBusinessLimiter
                 formatted_phone_number: placeDetails.data.result.formatted_phone_number,
                 website: placeDetails.data.result.website,
                 rating: placeDetails.data.result.rating,
-                user_ratings_total: placeDetails.data.result.user_ratings_total
+                user_ratings_total: placeDetails.data.result.user_ratings_total,
+                place_id: user.googlePlaceId
             },
             reviews: placeDetails.data.result.reviews || []
         };
@@ -1550,7 +1551,8 @@ app.get('/api/business/google-reviews', authenticateToken, googleBusinessLimiter
                 formatted_phone_number: placeDetails.data.result.formatted_phone_number,
                 website: placeDetails.data.result.website,
                 rating: placeDetails.data.result.rating,
-                user_ratings_total: placeDetails.data.result.user_ratings_total
+                user_ratings_total: placeDetails.data.result.user_ratings_total,
+                place_id: user.googlePlaceId
             },
             reviews: placeDetails.data.result.reviews || []
         };
