@@ -426,14 +426,14 @@ app.post('/api/auth/login', async (req, res) => {
         res.cookie('accessToken', accessToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
             maxAge: 15 * 60 * 1000 // 15 minutter
         });
 
         res.cookie('refreshToken', refreshToken, {
             httpOnly: true,
             secure: process.env.NODE_ENV === 'production',
-            sameSite: 'strict',
+            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
             maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dage
         });
 
@@ -447,7 +447,10 @@ app.post('/api/auth/login', async (req, res) => {
         });
     } catch (error) {
         console.error('Login error:', error);
-        res.status(500).json({ message: 'Der opstod en fejl ved login' });
+        res.status(500).json({ 
+            message: 'Der opstod en fejl ved login',
+            error: process.env.NODE_ENV === 'development' ? error.message : undefined
+        });
     }
 });
 
@@ -1728,30 +1731,41 @@ const refreshTokenSchema = new mongoose.Schema({
 
 const RefreshToken = mongoose.model('RefreshToken', refreshTokenSchema);
 
+// Tjek om nødvendige miljøvariabler er sat
+if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
+  console.error('KRITISK: JWT_SECRET eller JWT_REFRESH_SECRET mangler i miljøvariablerne');
+  process.exit(1); // Stop serveren hvis secrets mangler
+}
+
 // Generer tokens
 const generateTokens = async (user) => {
-  // Access token udløber efter 15 minutter
-  const accessToken = jwt.sign(
-    { userId: user._id, email: user.email },
-    process.env.JWT_SECRET,
-    { expiresIn: '15m' }
-  );
+  try {
+    // Access token udløber efter 15 minutter
+    const accessToken = jwt.sign(
+      { userId: user._id, email: user.email },
+      process.env.JWT_SECRET,
+      { expiresIn: '15m' }
+    );
 
-  // Refresh token udløber efter 7 dage
-  const refreshToken = jwt.sign(
-    { userId: user._id },
-    process.env.JWT_REFRESH_SECRET,
-    { expiresIn: '7d' }
-  );
+    // Refresh token udløber efter 7 dage
+    const refreshToken = jwt.sign(
+      { userId: user._id },
+      process.env.JWT_REFRESH_SECRET,
+      { expiresIn: '7d' }
+    );
 
-  // Gem refresh token i databasen
-  await RefreshToken.create({
-    token: refreshToken,
-    userId: user._id,
-    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 dage
-  });
+    // Gem refresh token i databasen
+    await RefreshToken.create({
+      token: refreshToken,
+      userId: user._id,
+      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 dage
+    });
 
-  return { accessToken, refreshToken };
+    return { accessToken, refreshToken };
+  } catch (error) {
+    console.error('Fejl ved generering af tokens:', error);
+    throw new Error('Kunne ikke generere tokens');
+  }
 };
 
 // Refresh token endpoint
