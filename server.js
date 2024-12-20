@@ -497,7 +497,7 @@ mongoose.connect(process.env.MONGODB_URI)
     });
 
 // Routes
-app.use('/', passwordResetRouter);
+app.use('/api', passwordResetRouter);
 
 // Login endpoint
 app.post('/api/auth/login', async (req, res) => {
