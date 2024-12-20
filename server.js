@@ -31,6 +31,7 @@ const google = require('googleapis');
 const path = require('path');
 const { Client } = require('@googlemaps/google-maps-services-js');
 const LandingPage = require('./models/LandingPage');
+const landingPagesRouter = require('./routes/landingPages');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -499,6 +500,7 @@ mongoose.connect(process.env.MONGODB_URI)
 
 // Routes
 app.use('/api', passwordResetRouter);
+app.use('/api/landing-pages', landingPagesRouter);
 
 // Login endpoint
 app.post('/api/auth/login', async (req, res) => {
