@@ -93,11 +93,29 @@ router.get('/', authenticateToken, async (req, res) => {
   }
 });
 
+// Preview endpoint
+router.get('/preview/:id', async (req, res) => {
+  try {
+    console.log('Henter preview for landing page:', req.params.id);
+    const page = await LandingPage.findById(req.params.id);
+    if (!page) {
+      return res.status(404).json({ message: 'Landing page ikke fundet' });
+    }
+    res.json(page);
+  } catch (error) {
+    console.error('Fejl ved hentning af landing page preview:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing page' });
+  }
+});
+
 router.put('/:id', authenticateToken, upload.fields([
   { name: 'logo', maxCount: 1 },
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
+    console.log('Modtaget opdateringsdata:', req.body);
+    console.log('Modtaget filer:', req.files);
+    
     const { title, description, backgroundColor, buttonColor, buttonTextColor, titleColor, buttons, showTitle, socialLinks } = req.body;
     const updates = {
       title,
@@ -111,7 +129,7 @@ router.put('/:id', authenticateToken, upload.fields([
       socialLinks: JSON.parse(socialLinks || '{}')
     };
 
-    if (req.files.logo) {
+    if (req.files?.logo) {
       const logoResult = await new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
           { folder: 'landing-pages/logos' },
@@ -125,7 +143,7 @@ router.put('/:id', authenticateToken, upload.fields([
       updates.logo = logoResult.secure_url;
     }
 
-    if (req.files.backgroundImage) {
+    if (req.files?.backgroundImage) {
       const backgroundResult = await new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
           { folder: 'landing-pages/backgrounds' },
@@ -139,6 +157,8 @@ router.put('/:id', authenticateToken, upload.fields([
       updates.backgroundImage = backgroundResult.secure_url;
     }
 
+    console.log('Opdaterer landing page med:', updates);
+
     const page = await LandingPage.findOneAndUpdate(
       { _id: req.params.id, userId: req.session.userId },
       updates,
@@ -149,6 +169,7 @@ router.put('/:id', authenticateToken, upload.fields([
       return res.status(404).json({ message: 'Landing page ikke fundet' });
     }
 
+    console.log('Opdateret landing page:', page);
     res.json(page);
   } catch (error) {
     console.error('Fejl ved opdatering af landing page:', error);
