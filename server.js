@@ -32,6 +32,7 @@ const path = require('path');
 const { Client } = require('@googlemaps/google-maps-services-js');
 const LandingPage = require('./models/LandingPage');
 const landingPagesRouter = require('./routes/landingPages');
+const jwt = require('jsonwebtoken');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -1758,6 +1759,163 @@ app.get('/api/landing-pages/preview/:id', async (req, res) => {
   } catch (error) {
     console.error('Fejl ved hentning af landing page preview:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing page' });
+  }
+});
+
+// Refresh token model
+const refreshTokenSchema = new mongoose.Schema({
+  token: { type: String, required: true },
+  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
+  expiresAt: { type: Date, required: true }
+});
+
+const RefreshToken = mongoose.model('RefreshToken', refreshTokenSchema);
+
+// Generer tokens
+const generateTokens = async (user) => {
+  // Access token udløber efter 15 minutter
+  const accessToken = jwt.sign(
+    { userId: user._id, email: user.email },
+    process.env.JWT_SECRET,
+    { expiresIn: '15m' }
+  );
+
+  // Refresh token udløber efter 7 dage
+  const refreshToken = jwt.sign(
+    { userId: user._id },
+    process.env.JWT_REFRESH_SECRET,
+    { expiresIn: '7d' }
+  );
+
+  // Gem refresh token i databasen
+  await RefreshToken.create({
+    token: refreshToken,
+    userId: user._id,
+    expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 dage
+  });
+
+  return { accessToken, refreshToken };
+};
+
+// Login endpoint
+app.post('/login', async (req, res) => {
+  try {
+    const { email, password } = req.body;
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      return res.status(401).json({ message: 'Forkert email eller adgangskode' });
+    }
+
+    const isValidPassword = await bcrypt.compare(password, user.password);
+    if (!isValidPassword) {
+      return res.status(401).json({ message: 'Forkert email eller adgangskode' });
+    }
+
+    const { accessToken, refreshToken } = await generateTokens(user);
+
+    // Sæt cookies
+    res.cookie('accessToken', accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 15 * 60 * 1000 // 15 minutter
+    });
+
+    res.cookie('refreshToken', refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dage
+    });
+
+    res.json({ accessToken, refreshToken });
+  } catch (error) {
+    console.error('Login error:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved login' });
+  }
+});
+
+// Refresh token endpoint
+app.post('/refresh-token', async (req, res) => {
+  try {
+    const { refreshToken } = req.body;
+
+    if (!refreshToken) {
+      return res.status(401).json({ message: 'Ingen refresh token' });
+    }
+
+    // Verificer refresh token
+    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
+    
+    // Find token i database
+    const savedToken = await RefreshToken.findOne({ 
+      token: refreshToken,
+      userId: decoded.userId
+    });
+
+    if (!savedToken) {
+      return res.status(401).json({ message: 'Invalid refresh token' });
+    }
+
+    // Check om token er udløbet
+    if (savedToken.expiresAt < new Date()) {
+      await RefreshToken.deleteOne({ _id: savedToken._id });
+      return res.status(401).json({ message: 'Refresh token er udløbet' });
+    }
+
+    // Find bruger
+    const user = await User.findById(decoded.userId);
+    if (!user) {
+      return res.status(401).json({ message: 'Bruger ikke fundet' });
+    }
+
+    // Generer nye tokens
+    const tokens = await generateTokens(user);
+
+    // Slet gammel refresh token
+    await RefreshToken.deleteOne({ _id: savedToken._id });
+
+    // Sæt nye cookies
+    res.cookie('accessToken', tokens.accessToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 15 * 60 * 1000
+    });
+
+    res.cookie('refreshToken', tokens.refreshToken, {
+      httpOnly: true,
+      secure: process.env.NODE_ENV === 'production',
+      sameSite: 'strict',
+      maxAge: 7 * 24 * 60 * 60 * 1000
+    });
+
+    res.json(tokens);
+  } catch (error) {
+    console.error('Refresh token error:', error);
+    res.status(401).json({ message: 'Invalid refresh token' });
+  }
+});
+
+// Logout endpoint
+app.post('/logout', async (req, res) => {
+  try {
+    const refreshToken = req.cookies.refreshToken;
+    
+    if (refreshToken) {
+      // Slet refresh token fra databasen
+      await RefreshToken.deleteOne({ token: refreshToken });
+    }
+
+    // Slet cookies
+    res.clearCookie('accessToken');
+    res.clearCookie('refreshToken');
+    
+    res.json({ message: 'Logget ud' });
+  } catch (error) {
+    console.error('Logout error:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved logout' });
   }
 });
 
