@@ -164,12 +164,10 @@ app.get('/api/auth/google',
 );
 
 app.get('/api/auth/google/callback',
-    passport.authenticate('google', { 
-        failureRedirect: '/login',
-        session: true
-    }),
-    (req, res) => {
-        res.redirect('/');
+    passport.authenticate('google', { failureRedirect: process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/login' : 'http://localhost:3001/login' }),
+    function(req, res) {
+        req.session.userId = req.user._id;
+        res.redirect(process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/dashboard' : 'http://localhost:3001/dashboard');
     }
 );
 
@@ -189,7 +187,7 @@ passport.use(new GoogleStrategy({
     clientID: process.env.GOOGLE_CLIENT_ID,
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.NODE_ENV === 'production'
-        ? "https://my.tapfeed.dk/api/auth/google/callback"
+        ? "https://api.tapfeed.dk/api/auth/google/callback"
         : "http://localhost:3000/api/auth/google/callback"
 },
 async function(accessToken, refreshToken, profile, cb) {
@@ -308,7 +306,9 @@ app.get('/api/auth/google-business', (req, res) => {
     const oauth2Client = new google.auth.OAuth2(
         process.env.GOOGLE_CLIENT_ID,
         process.env.GOOGLE_CLIENT_SECRET,
-        'http://localhost:3000/api/auth/google-business/callback'
+        process.env.NODE_ENV === 'production'
+            ? 'https://api.tapfeed.dk/api/auth/google-business/callback'
+            : 'http://localhost:3000/api/auth/google-business/callback'
     );
 
     const authUrl = oauth2Client.generateAuthUrl({
