@@ -1699,24 +1699,51 @@ app.post('/api/landing-pages', authenticateToken, upload.fields([
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const { title, description, backgroundColor, buttonColor, buttonTextColor } = req.body;
+    console.log('Modtaget landing page data:', req.body);
+    console.log('Modtaget filer:', req.files);
+    
+    const { 
+      title, 
+      description, 
+      backgroundColor, 
+      buttonColor, 
+      buttonTextColor,
+      titleColor,
+      buttons,
+      showTitle,
+      socialLinks 
+    } = req.body;
     
     // Upload billeder til Cloudinary hvis de findes
     let logoUrl = null;
     let backgroundImageUrl = null;
 
     if (req.files.logo) {
-      const logoResult = await cloudinary.uploader.upload_stream({
-        folder: 'landing-pages/logos'
-      }).end(req.files.logo[0].buffer);
+      const logoResult = await new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          { folder: 'landing-pages/logos' },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        uploadStream.end(req.files.logo[0].buffer);
+      });
       logoUrl = logoResult.secure_url;
     }
 
     if (req.files.backgroundImage) {
-      const bgResult = await cloudinary.uploader.upload_stream({
-        folder: 'landing-pages/backgrounds'
-      }).end(req.files.backgroundImage[0].buffer);
-      backgroundImageUrl = bgResult.secure_url;
+      const backgroundResult = await new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          { folder: 'landing-pages/backgrounds' },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        uploadStream.end(req.files.backgroundImage[0].buffer);
+      });
+      backgroundImageUrl = backgroundResult.secure_url;
     }
 
     const page = new LandingPage({
@@ -1727,8 +1754,14 @@ app.post('/api/landing-pages', authenticateToken, upload.fields([
       backgroundImage: backgroundImageUrl,
       backgroundColor,
       buttonColor,
-      buttonTextColor
+      buttonTextColor,
+      titleColor,
+      buttons: JSON.parse(buttons || '[]'),
+      showTitle: showTitle === 'true',
+      socialLinks: JSON.parse(socialLinks || '{}')
     });
+
+    console.log('Gemmer landing page:', page);
 
     await page.save();
     res.status(201).json(page);
