@@ -86,11 +86,14 @@ if (!app) {
 // CORS konfiguration
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
-        ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk', 'http://localhost:3000', 'http://localhost:3001']
+        ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk']
         : ['http://localhost:3000', 'http://localhost:3001'],
     credentials: true,
     methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie']
+    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie', 'Origin'],
+    exposedHeaders: ['Set-Cookie'],
+    preflightContinue: false,
+    optionsSuccessStatus: 204
 }));
 
 app.use(express.json());
@@ -103,22 +106,33 @@ app.use(session({
     saveUninitialized: false,
     store: MongoStore.create({
         mongoUrl: process.env.MONGODB_URI,
-        ttl: 24 * 60 * 60, // 1 dag
+        ttl: 24 * 60 * 60,
         autoRemove: 'native',
-        touchAfter: 24 * 3600 // Opdater session hver 24. time
+        touchAfter: 24 * 3600
     }),
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
         maxAge: 24 * 60 * 60 * 1000,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        domain: process.env.NODE_ENV === 'production' ? 'api.tapfeed.dk' : undefined
+        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : undefined
     }
-})); 
+}));
 
 // Initialize Passport and restore authentication state from session
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Debug middleware for sessions
+app.use((req, res, next) => {
+    console.log('Session Debug:', {
+        sessionID: req.sessionID,
+        isAuthenticated: req.isAuthenticated(),
+        user: req.user,
+        session: req.session
+    });
+    next();
+});
 
 // Passport configuration
 passport.serializeUser((user, done) => {
@@ -164,10 +178,27 @@ app.get('/api/auth/google',
 );
 
 app.get('/api/auth/google/callback',
-    passport.authenticate('google', { failureRedirect: process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/login' : 'http://localhost:3001/login' }),
+    passport.authenticate('google', { 
+        failureRedirect: process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/login' : 'http://localhost:3001/login',
+        failureMessage: true
+    }),
     function(req, res) {
+        console.log('Google callback success:', {
+            user: req.user,
+            session: req.session
+        });
+        
+        // Gem bruger ID i session
         req.session.userId = req.user._id;
-        res.redirect(process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/dashboard' : 'http://localhost:3001/dashboard');
+        
+        // Gem session explicit før redirect
+        req.session.save((err) => {
+            if (err) {
+                console.error('Session save error:', err);
+                return res.redirect(process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/login' : 'http://localhost:3001/login');
+            }
+            res.redirect(process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/dashboard' : 'http://localhost:3001/dashboard');
+        });
     }
 );
 
@@ -192,6 +223,11 @@ passport.use(new GoogleStrategy({
 },
 async function(accessToken, refreshToken, profile, cb) {
     try {
+        console.log('Google Strategy callback:', {
+            profile_id: profile.id,
+            email: profile.emails[0].value
+        });
+
         let user = await User.findOne({ email: profile.emails[0].value });
         
         if (!user) {
@@ -202,10 +238,14 @@ async function(accessToken, refreshToken, profile, cb) {
                 googleId: profile.id
             });
             await user.save();
+            console.log('New user created:', user._id);
+        } else {
+            console.log('Existing user found:', user._id);
         }
         
         return cb(null, user);
     } catch (error) {
+        console.error('Google Strategy error:', error);
         return cb(error, null);
     }
 }));
