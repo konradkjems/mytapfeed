@@ -209,10 +209,17 @@ router.delete('/:id', authenticateToken, async (req, res) => {
 // Public endpoint til at vise landing pages
 router.get('/view/:id', async (req, res) => {
   try {
+    console.log('Modtaget anmodning om landing page med ID:', req.params.id);
+    
     const page = await LandingPage.findById(req.params.id);
+    console.log('Fundet landing page:', page);
+    
     if (!page) {
+      console.log('Landing page ikke fundet');
       return res.status(404).json({ message: 'Landing page ikke fundet' });
     }
+    
+    console.log('Sender landing page data');
     res.json(page);
   } catch (error) {
     console.error('Fejl ved hentning af landing page:', error);
