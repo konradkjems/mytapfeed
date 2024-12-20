@@ -1525,7 +1525,7 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
 // Konfigurer app indstillinger
 app.set('trust proxy', 1);
 
-// Error handling middleware skal være før 404 handler
+// Error handling middleware
 app.use((err, req, res, next) => {
     console.error('Server fejl:', err);
     res.status(500).json({
@@ -1547,143 +1547,7 @@ app.use((req, res) => {
     res.status(404).json({ message: 'Endpoint ikke fundet' });
 });
 
-// Google Business Reviews endpoint
-app.get('/api/business/google-reviews', authenticateToken, googleBusinessLimiter, async (req, res) => {
-    try {
-        const user = await User.findById(req.session.userId);
-        if (!user || !user.googlePlaceId) {
-            return res.status(404).json({ 
-                message: 'Ingen virksomhed tilknyttet',
-                needsAuth: true
-            });
-        }
-
-        // Tjek cache først
-        const cacheKey = `business_${user.googlePlaceId}`;
-        const cachedData = businessCache.get(cacheKey);
-        if (cachedData) {
-            console.log('Returnerer cached virksomhedsdata for:', user.googlePlaceId);
-            return res.json(cachedData);
-        }
-
-        // Opret Google Maps klient
-        const client = new Client({});
-
-        // Hent detaljerede virksomhedsoplysninger
-        const placeDetails = await client.placeDetails({
-            params: {
-                place_id: user.googlePlaceId,
-                key: process.env.GOOGLE_MAPS_API_KEY,
-                fields: [
-                    'name',
-                    'formatted_address',
-                    'formatted_phone_number',
-                    'website',
-                    'rating',
-                    'user_ratings_total',
-                    'reviews'
-                ]
-            }
-        });
-
-        const responseData = {
-            business: {
-                name: placeDetails.data.result.name,
-                formatted_address: placeDetails.data.result.formatted_address,
-                formatted_phone_number: placeDetails.data.result.formatted_phone_number,
-                website: placeDetails.data.result.website,
-                rating: placeDetails.data.result.rating,
-                user_ratings_total: placeDetails.data.result.user_ratings_total,
-                place_id: user.googlePlaceId
-            },
-            reviews: placeDetails.data.result.reviews || []
-        };
-
-        // Gem i cache
-        businessCache.set(cacheKey, responseData);
-
-        res.json(responseData);
-
-    } catch (error) {
-        console.error('Fejl ved hentning af Google Maps data:', {
-            error: error.message,
-            stack: error.stack
-        });
-        
-        if (error.response?.status === 401) {
-            return res.status(401).json({
-                message: 'Din Google Business autorisation er udløbet. Log venligst ind igen.',
-                needsAuth: true
-            });
-        }
-
-        res.status(500).json({ 
-            message: 'Der opstod en fejl ved hentning af virksomhedsdata',
-            error: error.message
-        });
-    }
-});
-
-// Bulk upload endpoint
-app.post('/api/stands/bulk', authenticateToken, upload.single('file'), async (req, res) => {
-    try {
-        if (!req.file) {
-            return res.status(400).json({ message: 'Ingen fil uploadet' });
-        }
-
-        // Parse CSV filen
-        const fileContent = req.file.buffer.toString();
-        const rows = fileContent.split('\n');
-        const headers = rows[0].split(',').map(h => h.trim());
-
-        // Valider headers
-        const requiredHeaders = ['standerId', 'redirectUrl'];
-        const missingHeaders = requiredHeaders.filter(h => !headers.includes(h));
-        if (missingHeaders.length > 0) {
-            return res.status(400).json({ 
-                message: `Manglende påkrævede kolonner: ${missingHeaders.join(', ')}` 
-            });
-        }
-
-        // Parse og valider hver række
-        const products = [];
-        for (let i = 1; i < rows.length; i++) {
-            if (!rows[i].trim()) continue; // Skip tomme linjer
-            
-            const values = rows[i].split(',').map(v => v.trim());
-            const product = {};
-            
-            headers.forEach((header, index) => {
-                product[header] = values[index];
-            });
-
-            // Valider påkrævede felter
-            if (!product.standerId || !product.redirectUrl) {
-                continue;
-            }
-
-            // Tilføj standard værdier
-            product.productType = product.productType || 'stander';
-            product.userId = req.session.userId;
-
-            products.push(product);
-        }
-
-        // Indsæt produkter i databasen
-        const result = await Stand.insertMany(products);
-
-        res.json({ 
-            message: 'Produkter uploadet succesfuldt',
-            added: result.length
-        });
-
-    } catch (error) {
-        console.error('Fejl ved bulk upload:', error);
-        res.status(500).json({ message: 'Der opstod en fejl ved upload af produkter' });
-    }
-});
-
-// Landing Pages endpoints
+// Flyt landing pages endpoints før 404 handler og error handler
 app.get('/api/landing-pages', authenticateToken, async (req, res) => {
   try {
     const pages = await LandingPage.find({ userId: req.session.userId });
@@ -1776,29 +1640,45 @@ app.put('/api/landing-pages/:id', authenticateToken, upload.fields([
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const { title, description, backgroundColor, buttonColor, buttonTextColor, buttons, socialLinks } = req.body;
+    const { title, description, backgroundColor, buttonColor, buttonTextColor, titleColor, buttons, showTitle, socialLinks } = req.body;
     const updates = {
       title,
       description,
       backgroundColor,
       buttonColor,
       buttonTextColor,
+      titleColor,
       buttons: JSON.parse(buttons || '[]'),
+      showTitle: showTitle === 'true',
       socialLinks: JSON.parse(socialLinks || '{}')
     };
 
     if (req.files.logo) {
-      const logoResult = await cloudinary.uploader.upload_stream({
-        folder: 'landing-pages/logos'
-      }).end(req.files.logo[0].buffer);
+      const logoResult = await new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          { folder: 'landing-pages/logos' },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        uploadStream.end(req.files.logo[0].buffer);
+      });
       updates.logo = logoResult.secure_url;
     }
 
     if (req.files.backgroundImage) {
-      const bgResult = await cloudinary.uploader.upload_stream({
-        folder: 'landing-pages/backgrounds'
-      }).end(req.files.backgroundImage[0].buffer);
-      updates.backgroundImage = bgResult.secure_url;
+      const backgroundResult = await new Promise((resolve, reject) => {
+        const uploadStream = cloudinary.uploader.upload_stream(
+          { folder: 'landing-pages/backgrounds' },
+          (error, result) => {
+            if (error) reject(error);
+            else resolve(result);
+          }
+        );
+        uploadStream.end(req.files.backgroundImage[0].buffer);
+      });
+      updates.backgroundImage = backgroundResult.secure_url;
     }
 
     const page = await LandingPage.findOneAndUpdate(
