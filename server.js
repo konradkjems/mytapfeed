@@ -161,6 +161,81 @@ app.get('/api', (req, res) => {
 });
 
 // Auth routes
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        console.log('Login forsøg for bruger:', username);
+        
+        const user = await User.findOne({ username });
+
+        if (!user) {
+            console.log('Bruger ikke fundet:', username);
+            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
+        }
+
+        const isValidPassword = await bcrypt.compare(password, user.password);
+        if (!isValidPassword) {
+            console.log('Ugyldig adgangskode for bruger:', username);
+            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
+        }
+
+        // Gem bruger info i session
+        req.session.userId = user._id;
+        req.session.username = user.username;
+        req.session.isAdmin = user.isAdmin;
+
+        console.log('Login succesfuldt:', {
+            username: user.username,
+            userId: user._id,
+            sessionId: req.session.id
+        });
+
+        // Gem session før respons sendes
+        req.session.save((err) => {
+            if (err) {
+                console.error('Fejl ved gemning af session:', err);
+                return res.status(500).json({ message: 'Der opstod en fejl under login' });
+            }
+
+            res.json({ 
+                message: 'Login succesfuldt',
+                redirect: '/dashboard',
+                user: {
+                    username: user.username,
+                    isAdmin: user.isAdmin
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Login fejl:', error);
+        res.status(500).json({ message: 'Der opstod en fejl under login' });
+    }
+});
+
+// Authentication middleware
+const requireAuth = (req, res, next) => {
+    console.log('Session check:', {
+        sessionExists: !!req.session,
+        userId: req.session?.userId,
+        sessionId: req.session?.id
+    });
+
+    if (!req.session || !req.session.userId) {
+        return res.status(401).json({ message: 'Ikke autoriseret' });
+    }
+    next();
+};
+
+const authenticateToken = (req, res, next) => {
+    if (!req.session.userId) {
+        return res.status(401).json({ message: 'Ikke autoriseret' });
+    }
+    next();
+};
+
+// Beskyttede routes
+app.use('/api/stands', authenticateToken);
+
 app.get('/api/auth/status', (req, res) => {
     if (req.isAuthenticated()) {
         res.json({ 
@@ -173,37 +248,6 @@ app.get('/api/auth/status', (req, res) => {
         });
     }
 });
-
-app.get('/api/auth/google',
-    passport.authenticate('google', { 
-        scope: ['profile', 'email']
-    })
-);
-
-app.get('/api/auth/google/callback',
-    passport.authenticate('google', { 
-        failureRedirect: process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/login' : 'http://localhost:3001/login',
-        failureMessage: true
-    }),
-    function(req, res) {
-        console.log('Google callback success:', {
-            user: req.user,
-            session: req.session
-        });
-        
-        // Gem bruger ID i session
-        req.session.userId = req.user._id;
-        
-        // Gem session explicit før redirect
-        req.session.save((err) => {
-            if (err) {
-                console.error('Session save error:', err);
-                return res.redirect(process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/login' : 'http://localhost:3001/login');
-            }
-            res.redirect(process.env.NODE_ENV === 'production' ? 'https://my.tapfeed.dk/dashboard' : 'http://localhost:3001/dashboard');
-        });
-    }
-);
 
 app.post('/api/auth/logout', (req, res) => {
     req.logout((err) => {
@@ -400,161 +444,6 @@ app.get('/api/auth/google-business/callback', async (req, res) => {
 });
 
 // Auth endpoints
-app.post('/api/auth/login', async (req, res) => {
-    try {
-        const { username, password } = req.body;
-        
-        // Find bruger
-        const user = await User.findOne({ username });
-        if (!user) {
-            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
-        }
-
-        const isValidPassword = await bcrypt.compare(password, user.password);
-        if (!isValidPassword) {
-            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
-        }
-
-        // Gem bruger info i session
-        req.session.userId = user._id;
-        req.session.isAdmin = user.isAdmin;
-        
-        // Gem session explicit
-        await new Promise((resolve, reject) => {
-            req.session.save((err) => {
-                if (err) reject(err);
-                resolve();
-            });
-        });
-
-        res.json({
-            message: 'Login succesfuldt',
-            user: {
-                id: user._id,
-                username: user.username,
-                isAdmin: user.isAdmin
-            }
-        });
-    } catch (error) {
-        console.error('Login fejl:', error);
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
-    }
-});
-
-app.get('/api/auth/status', (req, res) => {
-    if (req.session.userId) {
-        res.json({ 
-            isAuthenticated: true,
-            userId: req.session.userId,
-            isAdmin: req.session.isAdmin
-        });
-    } else {
-        res.json({ isAuthenticated: false });
-    }
-});
-
-app.post('/api/auth/logout', (req, res) => {
-    req.session.destroy(err => {
-        if (err) {
-            console.error('Logout fejl:', err);
-            return res.status(500).json({ message: 'Der opstod en fejl under logout' });
-        }
-        res.clearCookie('connect.sid');
-        res.json({ message: 'Logout succesfuldt' });
-    });
-});
-
-// Middleware til at tjekke authentication
-const authenticateToken = (req, res, next) => {
-    if (!req.session.userId) {
-        return res.status(401).json({ message: 'Ikke autoriseret' });
-    }
-    next();
-};
-
-// Beskyttede routes
-app.use('/api/stands', authenticateToken);
-
-// Protected route middleware
-const requireAuth = (req, res, next) => {
-    console.log('Session check:', {
-        sessionExists: !!req.session,
-        userId: req.session?.userId,
-        sessionId: req.session?.id
-    });
-
-    if (!req.session || !req.session.userId) {
-        return res.status(401).json({ message: 'Ikke autoriseret' });
-    }
-    next();
-};
-
-// MongoDB connection
-mongoose.connect(process.env.MONGODB_URI)
-    .then(() => {
-        console.log('MongoDB forbindelse etableret');
-    })
-    .catch(err => {
-        console.error('MongoDB forbindelsesfejl:', err);
-    });
-
-// Routes
-app.use('/api', passwordResetRouter);
-app.use('/api/landing-pages', landingPagesRouter);
-
-// Login endpoint
-app.post('/api/auth/login', async (req, res) => {
-    try {
-        const { username, password } = req.body;
-        console.log('Login forsøg for bruger:', username);
-        
-        const user = await User.findOne({ username });
-
-        if (!user) {
-            console.log('Bruger ikke fundet:', username);
-            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
-        }
-
-        const isValidPassword = await bcrypt.compare(password, user.password);
-        if (!isValidPassword) {
-            console.log('Ugyldig adgangskode for bruger:', username);
-            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
-        }
-
-        // Gem bruger info i session
-        req.session.userId = user._id;
-        req.session.username = user.username;
-        req.session.isAdmin = user.isAdmin;
-
-        console.log('Login succesfuldt:', {
-            username: user.username,
-            userId: user._id,
-            sessionId: req.session.id
-        });
-
-        // Gem session før respons sendes
-        req.session.save((err) => {
-            if (err) {
-                console.error('Fejl ved gemning af session:', err);
-                return res.status(500).json({ message: 'Der opstod en fejl under login' });
-            }
-
-            res.json({ 
-                message: 'Login succesfuldt',
-                redirect: '/dashboard',
-                user: {
-                    username: user.username,
-                    isAdmin: user.isAdmin
-                }
-            });
-        });
-    } catch (error) {
-        console.error('Login fejl:', error);
-        res.status(500).json({ message: 'Der opstod en fejl under login' });
-    }
-});
-
-// Register endpoint
 app.post('/api/auth/register', async (req, res) => {
     console.log('Registrering forsøgt med:', {
         username: req.body.username,
@@ -1057,81 +946,80 @@ app.post('/api/stands/:standId/click', async (req, res) => {
     }
 });
 
+// Rate limiters
+const googleReviewsLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minut
+    max: 2, // max 2 requests per vindue
+    message: { message: 'For mange forsøg. Prøv igen senere.' }
+});
+
+const landingPagesLimiter = rateLimit({
+    windowMs: 60 * 1000, // 1 minut
+    max: 10, // max 10 requests per vindue
+    message: { message: 'For mange forsøg. Prøv igen senere.' }
+});
+
 // Google Maps integration endpoints
-app.get('/api/business/google-reviews', authenticateToken, googleBusinessLimiter, async (req, res) => {
-    try {
-        const user = await User.findById(req.session.userId);
-        if (!user || !user.googlePlaceId) {
-            return res.status(404).json({ 
-                message: 'Ingen virksomhed tilknyttet',
-                needsAuth: true
-            });
-        }
-
-        // Tjek cache først
-        const cacheKey = `business_${user.googlePlaceId}`;
-        const cachedData = businessCache.get(cacheKey);
-        if (cachedData) {
-            console.log('Returnerer cached virksomhedsdata for:', user.googlePlaceId);
-            return res.json(cachedData);
-        }
-
-        // Opret Google Maps klient
-        const client = new Client({});
-
-        // Hent detaljerede virksomhedsoplysninger
-        const placeDetails = await client.placeDetails({
-            params: {
-                place_id: user.googlePlaceId,
-                key: process.env.GOOGLE_MAPS_API_KEY,
-                fields: [
-                    'name',
-                    'formatted_address',
-                    'formatted_phone_number',
-                    'website',
-                    'rating',
-                    'user_ratings_total',
-                    'reviews'
-                ]
-            }
-        });
-
-        const responseData = {
-            business: {
-                name: placeDetails.data.result.name,
-                formatted_address: placeDetails.data.result.formatted_address,
-                formatted_phone_number: placeDetails.data.result.formatted_phone_number,
-                website: placeDetails.data.result.website,
-                rating: placeDetails.data.result.rating,
-                user_ratings_total: placeDetails.data.result.user_ratings_total,
-                place_id: user.googlePlaceId
-            },
-            reviews: placeDetails.data.result.reviews || []
-        };
-
-        // Gem i cache
-        businessCache.set(cacheKey, responseData);
-
-        res.json(responseData);
-
-    } catch (error) {
-        console.error('Fejl ved hentning af Google Maps data:', {
-            error: error.message,
-            stack: error.stack
-        });
-        
-        if (error.response?.status === 401) {
-            return res.status(401).json({
-                message: 'Din Google Business autorisation er udløbet. Log venligst ind igen.',
-                needsAuth: true
-            });
-        }
-
-        res.status(500).json({ 
-            message: 'Der opstod en fejl ved hentning af virksomhedsdata',
-            error: error.message
-        });
+app.get('/api/business/google-reviews', authenticateToken, googleReviewsLimiter, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    if (!user || !user.googlePlaceId) {
+      return res.json({
+        business: null,
+        reviews: []
+      });
     }
+
+    // Tjek cache først
+    const cacheKey = `reviews_${user.googlePlaceId}`;
+    const cachedData = businessCache.get(cacheKey);
+    if (cachedData) {
+      console.log('Returnerer cached reviews data');
+      return res.json(cachedData);
+    }
+
+    // Hent place details fra Google Places API
+    const placeDetailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${user.googlePlaceId}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+    const placeDetailsResponse = await axios.get(placeDetailsUrl);
+
+    if (placeDetailsResponse.data.status === 'REQUEST_DENIED') {
+      console.error('Google Places API afviste anmodningen:', placeDetailsResponse.data.error_message);
+      return res.status(500).json({ message: 'Kunne ikke hente virksomhedsdata' });
+    }
+
+    if (!placeDetailsResponse.data.result) {
+      return res.json({
+        business: null,
+        reviews: []
+      });
+    }
+
+    const placeDetails = placeDetailsResponse.data.result;
+    const responseData = {
+      business: {
+        name: placeDetails.name,
+        rating: placeDetails.rating,
+        user_ratings_total: placeDetails.user_ratings_total,
+        place_id: user.googlePlaceId,
+        formatted_address: placeDetails.formatted_address,
+        formatted_phone_number: placeDetails.formatted_phone_number,
+        website: placeDetails.website
+      },
+      reviews: placeDetails.reviews || []
+    };
+
+    // Gem i cache i 5 minutter
+    businessCache.set(cacheKey, responseData, 300);
+    
+    res.json(responseData);
+  } catch (error) {
+    console.error('Fejl ved hentning af Google reviews:', {
+      error: error.message,
+      stack: error.stack,
+      response: error.response?.data
+    });
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af anmeldelser' });
+  }
 });
 
 app.post('/api/business/setup-google-maps', authenticateToken, async (req, res) => {
@@ -1524,33 +1412,8 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
     }
 });
 
-// Konfigurer app indstillinger
-app.set('trust proxy', 1);
-
-// Error handling middleware
-app.use((err, req, res, next) => {
-    console.error('Server fejl:', err);
-    res.status(500).json({
-        message: 'Der opstod en serverfejl',
-        error: process.env.NODE_ENV === 'production' ? {} : err.message
-    });
-});
-
-// 404 handler skal være sidste middleware
-app.use((req, res) => {
-    console.log('404 Fejl:', {
-        method: req.method,
-        url: req.url,
-        path: req.path,
-        headers: req.headers,
-        body: req.body,
-        timestamp: new Date().toISOString()
-    });
-    res.status(404).json({ message: 'Endpoint ikke fundet' });
-});
-
 // Landing Pages endpoints
-app.post('/api/landing-pages', authenticateToken, upload.fields([
+app.post('/api/landing-pages', authenticateToken, landingPagesLimiter, upload.fields([
   { name: 'logo', maxCount: 1 },
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
@@ -1627,7 +1490,7 @@ app.post('/api/landing-pages', authenticateToken, upload.fields([
   }
 });
 
-app.get('/api/landing-pages', authenticateToken, async (req, res) => {
+app.get('/api/landing-pages', authenticateToken, landingPagesLimiter, async (req, res) => {
   try {
     const pages = await LandingPage.find({ userId: req.session.userId });
     res.json(pages);
@@ -1637,7 +1500,7 @@ app.get('/api/landing-pages', authenticateToken, async (req, res) => {
   }
 });
 
-app.put('/api/landing-pages/:id', authenticateToken, upload.fields([
+app.put('/api/landing-pages/:id', authenticateToken, landingPagesLimiter, upload.fields([
   { name: 'logo', maxCount: 1 },
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
@@ -1704,7 +1567,7 @@ app.put('/api/landing-pages/:id', authenticateToken, upload.fields([
   }
 });
 
-app.delete('/api/landing-pages/:id', authenticateToken, async (req, res) => {
+app.delete('/api/landing-pages/:id', authenticateToken, landingPagesLimiter, async (req, res) => {
   try {
     const page = await LandingPage.findOneAndDelete({
       _id: req.params.id,
@@ -1734,7 +1597,7 @@ app.delete('/api/landing-pages/:id', authenticateToken, async (req, res) => {
 });
 
 // Public endpoint til at vise landing pages
-app.get('/api/landing/:id', async (req, res) => {
+app.get('/api/landing/:id', landingPagesLimiter, async (req, res) => {
   try {
     const page = await LandingPage.findById(req.params.id);
     if (!page) {
@@ -1748,7 +1611,7 @@ app.get('/api/landing/:id', async (req, res) => {
 });
 
 // Landing page preview endpoint
-app.get('/api/landing-pages/preview/:id', async (req, res) => {
+app.get('/api/landing-pages/preview/:id', landingPagesLimiter, async (req, res) => {
   try {
     const page = await LandingPage.findById(req.params.id);
     if (!page) {
@@ -1759,6 +1622,70 @@ app.get('/api/landing-pages/preview/:id', async (req, res) => {
     console.error('Fejl ved hentning af landing page preview:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing page' });
   }
+});
+
+// Error handling middleware
+app.use((err, req, res, next) => {
+    console.error('Server fejl:', err);
+    res.status(500).json({
+        message: 'Der opstod en serverfejl',
+        error: process.env.NODE_ENV === 'production' ? {} : err.message
+    });
+});
+
+// 404 handler skal være sidste middleware
+app.use((req, res) => {
+    console.log('404 Fejl:', {
+        method: req.method,
+        url: req.url,
+        path: req.path,
+        headers: req.headers,
+        body: req.body,
+        timestamp: new Date().toISOString()
+    });
+    res.status(404).json({ message: 'Endpoint ikke fundet' });
+});
+
+// Konfigurer app indstillinger
+app.set('trust proxy', 1);
+
+// MongoDB connection
+mongoose.connect(process.env.MONGODB_URI, {
+    useNewUrlParser: true,
+    useUnifiedTopology: true,
+    serverSelectionTimeoutMS: 5000,
+    socketTimeoutMS: 45000,
+})
+.then(() => {
+    console.log('MongoDB forbindelse etableret');
+})
+.catch(err => {
+    console.error('MongoDB forbindelsesfejl:', err);
+    process.exit(1);
+});
+
+// Handle MongoDB connection events
+mongoose.connection.on('connected', () => {
+    console.log('Mongoose forbundet til MongoDB');
+});
+
+mongoose.connection.on('error', (err) => {
+    console.error('Mongoose forbindelsesfejl:', err);
+});
+
+mongoose.connection.on('disconnected', () => {
+    console.log('Mongoose afbrudt fra MongoDB');
+});
+
+process.on('SIGINT', async () => {
+    await mongoose.connection.close();
+    process.exit(0);
+});
+
+// Start serveren
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server kører på port ${PORT}`);
 });
 
 module.exports = app;
