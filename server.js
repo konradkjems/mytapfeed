@@ -32,6 +32,8 @@ const path = require('path');
 const { Client } = require('@googlemaps/google-maps-services-js');
 const LandingPage = require('./models/LandingPage');
 const landingPagesRouter = require('./routes/landingPages');
+const nodemailer = require('nodemailer');
+const crypto = require('crypto');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -226,11 +228,24 @@ const requireAuth = (req, res, next) => {
     next();
 };
 
-const authenticateToken = (req, res, next) => {
-    if (!req.session.userId) {
-        return res.status(401).json({ message: 'Ikke autoriseret' });
+const authenticateToken = async (req, res, next) => {
+    try {
+        if (!req.session.userId) {
+            return res.status(401).json({ message: 'Ikke autoriseret' });
+        }
+
+        // Hent brugerdata og sæt det på request objektet
+        const user = await User.findById(req.session.userId);
+        if (!user) {
+            return res.status(401).json({ message: 'Bruger ikke fundet' });
+        }
+
+        req.user = user;
+        next();
+    } catch (error) {
+        console.error('Auth error:', error);
+        res.status(500).json({ message: 'Der opstod en fejl ved autorisation' });
     }
-    next();
 };
 
 // Beskyttede routes
@@ -736,47 +751,167 @@ const isAdmin = async (req, res, next) => {
 };
 
 // Admin endpoints
-app.get('/api/admin/users', authenticateToken, isAdmin, async (req, res) => {
-    try {
-        const users = await User.find().select('-password');
-        res.json(users);
-    } catch (error) {
-        console.error('Fejl ved hentning af brugere:', error);
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
+app.get('/api/admin/users', authenticateToken, async (req, res) => {
+  try {
+    // Tjek om brugeren er admin
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: 'Ingen adgang' });
     }
+
+    const users = await User.find({}, '-password');
+    res.json(users);
+  } catch (error) {
+    console.error('Fejl ved hentning af brugere:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af brugere' });
+  }
 });
 
-app.put('/api/admin/users/:userId/block', authenticateToken, isAdmin, async (req, res) => {
-    try {
-        const user = await User.findById(req.params.userId);
-        if (!user) {
-            return res.status(404).json({ message: 'Bruger ikke fundet' });
-        }
-        if (user.isAdmin) {
-            return res.status(403).json({ message: 'Kan ikke blokere admin brugere' });
-        }
-        user.isBlocked = true;
-        await user.save();
-        res.json({ message: 'Bruger deaktiveret' });
-    } catch (error) {
-        console.error('Fejl ved blokering af bruger:', error);
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
+// Opdater bruger
+app.put('/api/admin/users/:id', authenticateToken, async (req, res) => {
+  try {
+    // Tjek om brugeren er admin
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: 'Ingen adgang' });
     }
+
+    const { username, email, isAdmin } = req.body;
+    const userId = req.params.id;
+
+    // Tjek om brugeren findes
+    const userToUpdate = await User.findById(userId);
+    if (!userToUpdate) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+
+    // Opdater bruger
+    const updatedUser = await User.findByIdAndUpdate(
+      userId,
+      { username, email, isAdmin },
+      { new: true, select: '-password' }
+    );
+
+    res.json(updatedUser);
+  } catch (error) {
+    console.error('Fejl ved opdatering af bruger:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved opdatering af bruger' });
+  }
 });
 
-app.put('/api/admin/users/:userId/unblock', authenticateToken, isAdmin, async (req, res) => {
-    try {
-        const user = await User.findById(req.params.userId);
-        if (!user) {
-            return res.status(404).json({ message: 'Bruger ikke fundet' });
-        }
-        user.isBlocked = false;
-        await user.save();
-        res.json({ message: 'Bruger genaktiveret' });
-    } catch (error) {
-        console.error('Fejl ved genaktivering af bruger:', error);
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
+// Nulstil adgangskode (Admin)
+app.post('/api/admin/users/:id/reset-password', authenticateToken, async (req, res) => {
+  try {
+    // Tjek om brugeren er admin
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: 'Ingen adgang' });
     }
+
+    const userId = req.params.id;
+    const userToReset = await User.findById(userId);
+    if (!userToReset) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+
+    // Generer reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenExpiry = Date.now() + 3600000; // 1 time
+
+    // Gem token i brugerens dokument
+    await User.findByIdAndUpdate(userId, {
+      resetPasswordToken: resetToken,
+      resetPasswordExpires: resetTokenExpiry
+    });
+
+    // Generer reset URL
+    const resetUrl = process.env.NODE_ENV === 'production'
+      ? `https://my.tapfeed.dk/reset-password/${resetToken}`
+      : `http://localhost:3001/reset-password/${resetToken}`;
+
+    // Send email med reset link
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD
+      }
+    });
+
+    await transporter.sendMail({
+      from: process.env.GMAIL_USER,
+      to: userToReset.email,
+      subject: 'Nulstil din adgangskode - TapFeed',
+      html: `
+        <p>Hej ${userToReset.username},</p>
+        <p>Din adgangskode er blevet nulstillet af en administrator.</p>
+        <p>Klik på linket herunder for at vælge en ny adgangskode:</p>
+        <a href="${resetUrl}">${resetUrl}</a>
+        <p>Dette link udløber om 1 time.</p>
+        <p>Hvis du ikke har anmodet om denne nulstilling, bedes du kontakte support.</p>
+        <p>Venlig hilsen,<br>TapFeed Team</p>
+      `
+    });
+
+    res.json({ message: 'Nulstillingslink sendt til brugerens email' });
+  } catch (error) {
+    console.error('Fejl ved nulstilling af adgangskode:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved nulstilling af adgangskode' });
+  }
+});
+
+// Slet bruger
+app.delete('/api/admin/users/:id', authenticateToken, async (req, res) => {
+  try {
+    // Tjek om brugeren er admin
+    const adminUser = await User.findById(req.session.userId);
+    if (!adminUser || !adminUser.isAdmin) {
+      return res.status(403).json({ message: 'Ingen adgang' });
+    }
+
+    const userId = req.params.id;
+    const userToDelete = await User.findById(userId);
+
+    if (!userToDelete) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+
+    // Tjek om brugeren der skal slettes er admin
+    if (userToDelete.isAdmin) {
+      return res.status(403).json({ message: 'Kan ikke slette admin brugere' });
+    }
+
+    // Slet brugerens landing pages
+    await LandingPage.deleteMany({ userId: userId });
+
+    // Slet brugeren
+    await User.findByIdAndDelete(userId);
+
+    res.json({ message: 'Bruger og tilhørende data slettet succesfuldt' });
+  } catch (error) {
+    console.error('Fejl ved sletning af bruger:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved sletning af bruger' });
+  }
+});
+
+// Hent brugerens landing pages
+app.get('/api/admin/users/:id/landing-pages', authenticateToken, async (req, res) => {
+  try {
+    // Tjek om brugeren er admin
+    const adminUser = await User.findById(req.session.userId);
+    if (!adminUser || !adminUser.isAdmin) {
+      return res.status(403).json({ message: 'Ingen adgang' });
+    }
+
+    const userId = req.params.id;
+    const userExists = await User.findById(userId);
+    if (!userExists) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+
+    const landingPages = await LandingPage.find({ userId: userId });
+    res.json(landingPages);
+  } catch (error) {
+    console.error('Fejl ved hentning af brugerens landing pages:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing pages' });
+  }
 });
 
 // Category endpoints
@@ -1625,6 +1760,113 @@ app.get('/api/landing-pages/preview/:id', async (req, res) => {
   } catch (error) {
     console.error('Fejl ved hentning af landing page preview:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing page' });
+  }
+});
+
+// Password reset endpoints
+app.post('/api/request-password-reset', async (req, res) => {
+  try {
+    const { email } = req.body;
+    const user = await User.findOne({ email });
+
+    if (!user) {
+      // For sikkerhed returnerer vi samme besked selvom brugeren ikke findes
+      return res.json({ message: 'Hvis en konto med denne email eksisterer, vil der blive sendt et nulstillingslink' });
+    }
+
+    // Generer reset token
+    const resetToken = crypto.randomBytes(32).toString('hex');
+    const resetTokenExpiry = Date.now() + 3600000; // 1 time
+
+    // Gem token i brugerens dokument
+    await User.findByIdAndUpdate(user._id, {
+      resetPasswordToken: resetToken,
+      resetPasswordExpires: resetTokenExpiry
+    });
+
+    // Generer reset URL
+    const resetUrl = process.env.NODE_ENV === 'production'
+      ? `https://my.tapfeed.dk/reset-password/${resetToken}`
+      : `http://localhost:3001/reset-password/${resetToken}`;
+
+    // Send email med reset link
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD
+      }
+    });
+
+    await transporter.sendMail({
+      from: process.env.GMAIL_USER,
+      to: user.email,
+      subject: 'Nulstil din adgangskode - TapFeed',
+      html: `
+        <p>Hej ${user.username},</p>
+        <p>Du har anmodet om at nulstille din adgangskode.</p>
+        <p>Klik på linket herunder for at vælge en ny adgangskode:</p>
+        <a href="${resetUrl}">${resetUrl}</a>
+        <p>Dette link udløber om 1 time.</p>
+        <p>Hvis du ikke har anmodet om denne nulstilling, kan du ignorere denne email.</p>
+        <p>Venlig hilsen,<br>TapFeed Team</p>
+      `
+    });
+
+    res.json({ message: 'Hvis en konto med denne email eksisterer, vil der blive sendt et nulstillingslink' });
+  } catch (error) {
+    console.error('Fejl ved anmodning om nulstilling af adgangskode:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved anmodning om nulstilling af adgangskode' });
+  }
+});
+
+// Verify reset token
+app.get('/api/verify-reset-token/:token', async (req, res) => {
+  try {
+    const { token } = req.params;
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: 'Ugyldigt eller udløbet nulstillingslink' });
+    }
+
+    res.json({ message: 'Token er gyldigt' });
+  } catch (error) {
+    console.error('Fejl ved verificering af reset token:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved verificering af nulstillingslink' });
+  }
+});
+
+// Reset password with token
+app.post('/api/reset-password', async (req, res) => {
+  try {
+    const { token, newPassword } = req.body;
+    const user = await User.findOne({
+      resetPasswordToken: token,
+      resetPasswordExpires: { $gt: Date.now() }
+    });
+
+    if (!user) {
+      return res.status(400).json({ message: 'Ugyldigt eller udløbet nulstillingslink' });
+    }
+
+    // Hash new password
+    const salt = await bcrypt.genSalt(10);
+    const hashedPassword = await bcrypt.hash(newPassword, salt);
+
+    // Update user
+    user.password = hashedPassword;
+    user.resetPasswordToken = undefined;
+    user.resetPasswordExpires = undefined;
+    await user.save();
+
+    res.json({ message: 'Adgangskode nulstillet succesfuldt' });
+  } catch (error) {
+    console.error('Fejl ved nulstilling af adgangskode:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved nulstilling af adgangskode' });
   }
 });
 
