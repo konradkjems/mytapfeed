@@ -40,6 +40,21 @@ const landingPageSchema = new mongoose.Schema({
     type: String,
     default: '#000000'
   },
+  titleFont: {
+    type: String,
+    enum: ['Inter', 'Roboto', 'Playfair Display', 'Montserrat', 'Lato', 'Open Sans', 'Raleway', 'Poppins'],
+    default: 'Inter'
+  },
+  descriptionFont: {
+    type: String,
+    enum: ['Inter', 'Roboto', 'Playfair Display', 'Montserrat', 'Lato', 'Open Sans', 'Raleway', 'Poppins'],
+    default: 'Inter'
+  },
+  buttonFont: {
+    type: String,
+    enum: ['Inter', 'Roboto', 'Playfair Display', 'Montserrat', 'Lato', 'Open Sans', 'Raleway', 'Poppins'],
+    default: 'Inter'
+  },
   buttons: [{
     text: String,
     url: String,
