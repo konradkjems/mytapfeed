@@ -32,6 +32,14 @@ const landingPageSchema = new mongoose.Schema({
     type: String,
     default: '#ffffff'
   },
+  titleColor: {
+    type: String,
+    default: '#000000'
+  },
+  descriptionColor: {
+    type: String,
+    default: '#000000'
+  },
   buttons: [{
     text: String,
     url: String,
