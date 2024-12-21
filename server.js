@@ -1610,13 +1610,17 @@ app.get('/api/landing/:id', landingPagesLimiter, async (req, res) => {
   }
 });
 
-// Landing page preview endpoint
-app.get('/api/landing-pages/preview/:id', landingPagesLimiter, async (req, res) => {
+// Landing page preview endpoint - tillader alle origins og ingen rate limiting
+app.get('/api/landing-pages/preview/:id', async (req, res) => {
   try {
     const page = await LandingPage.findById(req.params.id);
     if (!page) {
       return res.status(404).json({ message: 'Landing page ikke fundet' });
     }
+    // Tillad CORS for dette endpoint
+    res.header('Access-Control-Allow-Origin', '*');
+    res.header('Access-Control-Allow-Methods', 'GET');
+    res.header('Access-Control-Allow-Headers', 'Content-Type');
     res.json(page);
   } catch (error) {
     console.error('Fejl ved hentning af landing page preview:', error);
