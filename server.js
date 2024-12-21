@@ -32,7 +32,6 @@ const path = require('path');
 const { Client } = require('@googlemaps/google-maps-services-js');
 const LandingPage = require('./models/LandingPage');
 const landingPagesRouter = require('./routes/landingPages');
-const jwt = require('jsonwebtoken');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -404,40 +403,31 @@ app.get('/api/auth/google-business/callback', async (req, res) => {
 app.post('/api/auth/login', async (req, res) => {
     try {
         const { username, password } = req.body;
-        console.log('Login forsøg for bruger:', username);
         
+        // Find bruger
         const user = await User.findOne({ username });
-
         if (!user) {
-            console.log('Bruger ikke fundet:', username);
             return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
         }
 
         const isValidPassword = await bcrypt.compare(password, user.password);
         if (!isValidPassword) {
-            console.log('Ugyldig adgangskode for bruger:', username);
             return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
         }
 
-        // Generer tokens
-        const { accessToken, refreshToken } = await generateTokens(user);
-
-        // Sæt cookies
-        res.cookie('accessToken', accessToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-            maxAge: 15 * 60 * 1000 // 15 minutter
+        // Gem bruger info i session
+        req.session.userId = user._id;
+        req.session.isAdmin = user.isAdmin;
+        
+        // Gem session explicit
+        await new Promise((resolve, reject) => {
+            req.session.save((err) => {
+                if (err) reject(err);
+                resolve();
+            });
         });
 
-        res.cookie('refreshToken', refreshToken, {
-            httpOnly: true,
-            secure: process.env.NODE_ENV === 'production',
-            sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-            maxAge: 7 * 24 * 60 * 60 * 1000 // 7 dage
-        });
-
-        res.json({ 
+        res.json({
             message: 'Login succesfuldt',
             user: {
                 id: user._id,
@@ -446,11 +436,8 @@ app.post('/api/auth/login', async (req, res) => {
             }
         });
     } catch (error) {
-        console.error('Login error:', error);
-        res.status(500).json({ 
-            message: 'Der opstod en fejl ved login',
-            error: process.env.NODE_ENV === 'development' ? error.message : undefined
-        });
+        console.error('Login fejl:', error);
+        res.status(500).json({ message: 'Der opstod en serverfejl' });
     }
 });
 
@@ -514,6 +501,58 @@ mongoose.connect(process.env.MONGODB_URI)
 // Routes
 app.use('/api', passwordResetRouter);
 app.use('/api/landing-pages', landingPagesRouter);
+
+// Login endpoint
+app.post('/api/auth/login', async (req, res) => {
+    try {
+        const { username, password } = req.body;
+        console.log('Login forsøg for bruger:', username);
+        
+        const user = await User.findOne({ username });
+
+        if (!user) {
+            console.log('Bruger ikke fundet:', username);
+            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
+        }
+
+        const isValidPassword = await bcrypt.compare(password, user.password);
+        if (!isValidPassword) {
+            console.log('Ugyldig adgangskode for bruger:', username);
+            return res.status(401).json({ message: 'Ugyldigt brugernavn eller adgangskode' });
+        }
+
+        // Gem bruger info i session
+        req.session.userId = user._id;
+        req.session.username = user.username;
+        req.session.isAdmin = user.isAdmin;
+
+        console.log('Login succesfuldt:', {
+            username: user.username,
+            userId: user._id,
+            sessionId: req.session.id
+        });
+
+        // Gem session før respons sendes
+        req.session.save((err) => {
+            if (err) {
+                console.error('Fejl ved gemning af session:', err);
+                return res.status(500).json({ message: 'Der opstod en fejl under login' });
+            }
+
+            res.json({ 
+                message: 'Login succesfuldt',
+                redirect: '/dashboard',
+                user: {
+                    username: user.username,
+                    isAdmin: user.isAdmin
+                }
+            });
+        });
+    } catch (error) {
+        console.error('Login fejl:', error);
+        res.status(500).json({ message: 'Der opstod en fejl under login' });
+    }
+});
 
 // Register endpoint
 app.post('/api/auth/register', async (req, res) => {
@@ -1719,149 +1758,6 @@ app.get('/api/landing-pages/preview/:id', async (req, res) => {
   } catch (error) {
     console.error('Fejl ved hentning af landing page preview:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing page' });
-  }
-});
-
-// Refresh token model
-const refreshTokenSchema = new mongoose.Schema({
-  token: { type: String, required: true },
-  userId: { type: mongoose.Schema.Types.ObjectId, ref: 'User', required: true },
-  expiresAt: { type: Date, required: true }
-});
-
-const RefreshToken = mongoose.model('RefreshToken', refreshTokenSchema);
-
-// Tjek om nødvendige miljøvariabler er sat
-if (!process.env.JWT_SECRET || !process.env.JWT_REFRESH_SECRET) {
-  console.error('KRITISK: JWT_SECRET eller JWT_REFRESH_SECRET mangler i miljøvariablerne');
-  process.exit(1); // Stop serveren hvis secrets mangler
-}
-
-// Generer tokens
-const generateTokens = async (user) => {
-  try {
-    // Access token udløber efter 15 minutter
-    const accessToken = jwt.sign(
-      { userId: user._id, email: user.email },
-      process.env.JWT_SECRET,
-      { expiresIn: '15m' }
-    );
-
-    // Refresh token udløber efter 7 dage
-    const refreshToken = jwt.sign(
-      { userId: user._id },
-      process.env.JWT_REFRESH_SECRET,
-      { expiresIn: '7d' }
-    );
-
-    // Gem refresh token i databasen
-    await RefreshToken.create({
-      token: refreshToken,
-      userId: user._id,
-      expiresAt: new Date(Date.now() + 7 * 24 * 60 * 60 * 1000) // 7 dage
-    });
-
-    return { accessToken, refreshToken };
-  } catch (error) {
-    console.error('Fejl ved generering af tokens:', error);
-    throw new Error('Kunne ikke generere tokens');
-  }
-};
-
-// Refresh token endpoint
-app.post('/refresh-token', async (req, res) => {
-  try {
-    const { refreshToken } = req.body;
-
-    if (!refreshToken) {
-      return res.status(401).json({ message: 'Ingen refresh token' });
-    }
-
-    // Verificer refresh token
-    const decoded = jwt.verify(refreshToken, process.env.JWT_REFRESH_SECRET);
-    
-    // Find token i database
-    const savedToken = await RefreshToken.findOne({ 
-      token: refreshToken,
-      userId: decoded.userId
-    });
-
-    if (!savedToken) {
-      return res.status(401).json({ message: 'Invalid refresh token' });
-    }
-
-    // Check om token er udløbet
-    if (savedToken.expiresAt < new Date()) {
-      await RefreshToken.deleteOne({ _id: savedToken._id });
-      return res.status(401).json({ message: 'Refresh token er udløbet' });
-    }
-
-    // Find bruger
-    const user = await User.findById(decoded.userId);
-    if (!user) {
-      return res.status(401).json({ message: 'Bruger ikke fundet' });
-    }
-
-    // Generer nye tokens
-    const tokens = await generateTokens(user);
-
-    // Slet gammel refresh token
-    await RefreshToken.deleteOne({ _id: savedToken._id });
-
-    // Sæt nye cookies
-    res.cookie('accessToken', tokens.accessToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 15 * 60 * 1000
-    });
-
-    res.cookie('refreshToken', tokens.refreshToken, {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      sameSite: 'strict',
-      maxAge: 7 * 24 * 60 * 60 * 1000
-    });
-
-    res.json(tokens);
-  } catch (error) {
-    console.error('Refresh token error:', error);
-    res.status(401).json({ message: 'Invalid refresh token' });
-  }
-});
-
-// Logout endpoint
-app.post('/logout', async (req, res) => {
-  try {
-    const refreshToken = req.cookies.refreshToken;
-    
-    if (refreshToken) {
-      // Slet refresh token fra databasen
-      await RefreshToken.deleteOne({ token: refreshToken });
-    }
-
-    // Slet cookies
-    res.clearCookie('accessToken');
-    res.clearCookie('refreshToken');
-    
-    res.json({ message: 'Logget ud' });
-  } catch (error) {
-    console.error('Logout error:', error);
-    res.status(500).json({ message: 'Der opstod en fejl ved logout' });
-  }
-});
-
-// User data endpoint
-app.get('/api/auth/user', authenticateToken, async (req, res) => {
-  try {
-    const user = await User.findById(req.session.userId).select('-password');
-    if (!user) {
-      return res.status(404).json({ message: 'Bruger ikke fundet' });
-    }
-    res.json(user);
-  } catch (error) {
-    console.error('Fejl ved hentning af brugerdata:', error);
-    res.status(500).json({ message: 'Der opstod en fejl ved hentning af brugerdata' });
   }
 });
 
