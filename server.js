@@ -1851,4 +1851,18 @@ app.post('/logout', async (req, res) => {
   }
 });
 
+// User data endpoint
+app.get('/api/auth/user', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+    res.json(user);
+  } catch (error) {
+    console.error('Fejl ved hentning af brugerdata:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af brugerdata' });
+  }
+});
+
 module.exports = app;
