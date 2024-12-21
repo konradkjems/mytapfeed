@@ -162,40 +162,17 @@ app.get('/api', (req, res) => {
 });
 
 // Auth routes
-app.get('/api/auth/user', authenticateToken, async (req, res) => {
-  try {
-    const user = await User.findById(req.session.userId).select('-password');
-    if (!user) {
-      return res.status(404).json({ message: 'Bruger ikke fundet' });
-    }
-    res.json(user);
-  } catch (error) {
-    console.error('Fejl ved hentning af brugerdata:', error);
-    res.status(500).json({ message: 'Der opstod en fejl ved hentning af brugerdata' });
-  }
-});
-
 app.get('/api/auth/status', (req, res) => {
-  if (req.session.userId) {
-    res.json({ 
-      isAuthenticated: true,
-      userId: req.session.userId,
-      isAdmin: req.session.isAdmin
-    });
-  } else {
-    res.json({ isAuthenticated: false });
-  }
-});
-
-app.post('/api/auth/logout', (req, res) => {
-  req.session.destroy(err => {
-    if (err) {
-      console.error('Logout fejl:', err);
-      return res.status(500).json({ message: 'Der opstod en fejl under logout' });
+    if (req.isAuthenticated()) {
+        res.json({ 
+            isAuthenticated: true, 
+            user: req.user 
+        });
+    } else {
+        res.json({ 
+            isAuthenticated: false 
+        });
     }
-    res.clearCookie('connect.sid');
-    res.json({ message: 'Logout succesfuldt' });
-  });
 });
 
 app.get('/api/auth/google',
@@ -228,6 +205,17 @@ app.get('/api/auth/google/callback',
         });
     }
 );
+
+app.post('/api/auth/logout', (req, res) => {
+    req.logout((err) => {
+        if (err) {
+            return res.status(500).json({ 
+                message: 'Der opstod en fejl ved logout' 
+            });
+        }
+        res.json({ message: 'Logget ud' });
+    });
+});
 
 // Google Strategy
 passport.use(new GoogleStrategy({
@@ -464,6 +452,29 @@ app.post('/api/auth/login', async (req, res) => {
             error: process.env.NODE_ENV === 'development' ? error.message : undefined
         });
     }
+});
+
+app.get('/api/auth/status', (req, res) => {
+    if (req.session.userId) {
+        res.json({ 
+            isAuthenticated: true,
+            userId: req.session.userId,
+            isAdmin: req.session.isAdmin
+        });
+    } else {
+        res.json({ isAuthenticated: false });
+    }
+});
+
+app.post('/api/auth/logout', (req, res) => {
+    req.session.destroy(err => {
+        if (err) {
+            console.error('Logout fejl:', err);
+            return res.status(500).json({ message: 'Der opstod en fejl under logout' });
+        }
+        res.clearCookie('connect.sid');
+        res.json({ message: 'Logout succesfuldt' });
+    });
 });
 
 // Middleware til at tjekke authentication
@@ -1837,6 +1848,20 @@ app.post('/logout', async (req, res) => {
   } catch (error) {
     console.error('Logout error:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved logout' });
+  }
+});
+
+// User data endpoint
+app.get('/api/auth/user', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId).select('-password');
+    if (!user) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+    res.json(user);
+  } catch (error) {
+    console.error('Fejl ved hentning af brugerdata:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af brugerdata' });
   }
 });
 

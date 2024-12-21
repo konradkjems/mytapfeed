@@ -21,7 +21,6 @@ router.post('/', authenticateToken, upload.fields([
       buttonColor, 
       buttonTextColor,
       titleColor,
-      descriptionColor,
       buttons,
       showTitle,
       socialLinks 
@@ -69,7 +68,6 @@ router.post('/', authenticateToken, upload.fields([
       buttonColor,
       buttonTextColor,
       titleColor,
-      descriptionColor,
       buttons: JSON.parse(buttons || '[]'),
       showTitle: showTitle === 'true',
       socialLinks: JSON.parse(socialLinks || '{}')
@@ -118,19 +116,7 @@ router.put('/:id', authenticateToken, upload.fields([
     console.log('Modtaget opdateringsdata:', req.body);
     console.log('Modtaget filer:', req.files);
     
-    const { 
-      title, 
-      description, 
-      backgroundColor, 
-      buttonColor, 
-      buttonTextColor, 
-      titleColor,
-      descriptionColor,
-      buttons, 
-      showTitle, 
-      socialLinks 
-    } = req.body;
-    
+    const { title, description, backgroundColor, buttonColor, buttonTextColor, titleColor, buttons, showTitle, socialLinks } = req.body;
     const updates = {
       title,
       description,
@@ -138,7 +124,6 @@ router.put('/:id', authenticateToken, upload.fields([
       buttonColor,
       buttonTextColor,
       titleColor,
-      descriptionColor,
       buttons: JSON.parse(buttons || '[]'),
       showTitle: showTitle === 'true',
       socialLinks: JSON.parse(socialLinks || '{}')
