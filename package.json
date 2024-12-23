@@ -10,6 +10,9 @@
     "vercel-build": "npm run build"
   },
   "dependencies": {
+    "@capacitor/cli": "^6.2.0",
+    "@capacitor/core": "^6.2.0",
+    "@capacitor/ios": "^6.2.0",
     "@googlemaps/google-maps-services-js": "^3.4.0",
     "@mui/lab": "^6.0.0-beta.20",
     "@vercel/speed-insights": "^1.1.0",

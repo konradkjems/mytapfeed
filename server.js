@@ -252,10 +252,18 @@ const authenticateToken = async (req, res, next) => {
 app.use('/api/stands', authenticateToken);
 
 app.get('/api/auth/status', (req, res) => {
-    if (req.isAuthenticated()) {
+    console.log('Auth status check:', {
+        sessionID: req.sessionID,
+        session: req.session,
+        isAuthenticated: req.isAuthenticated(),
+        user: req.user,
+        userId: req.session?.userId
+    });
+    
+    if (req.isAuthenticated() || req.session?.userId) {
         res.json({ 
             isAuthenticated: true, 
-            user: req.user 
+            user: req.user || req.session.userId
         });
     } else {
         res.json({ 
@@ -281,7 +289,8 @@ passport.use(new GoogleStrategy({
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.NODE_ENV === 'production'
         ? "https://api.tapfeed.dk/api/auth/google/callback"
-        : "http://localhost:3000/api/auth/google/callback"
+        : "http://localhost:3000/api/auth/google/callback",
+    proxy: true
 },
 async function(accessToken, refreshToken, profile, cb) {
     try {
@@ -297,11 +306,17 @@ async function(accessToken, refreshToken, profile, cb) {
                 username: profile.displayName.toLowerCase().replace(/\s+/g, '_'),
                 email: profile.emails[0].value,
                 password: 'google-auth-' + Math.random().toString(36).slice(-8),
-                googleId: profile.id
+                googleId: profile.id,
+                googleAccessToken: accessToken,
+                googleRefreshToken: refreshToken
             });
             await user.save();
             console.log('New user created:', user._id);
         } else {
+            // Update tokens
+            user.googleAccessToken = accessToken;
+            user.googleRefreshToken = refreshToken;
+            await user.save();
             console.log('Existing user found:', user._id);
         }
         
@@ -390,10 +405,50 @@ app.get('/api/auth/google',
 );
 
 app.get('/api/auth/google/callback', 
-    passport.authenticate('google', { failureRedirect: 'http://localhost:3001/login' }),
+    passport.authenticate('google', { 
+        failureRedirect: process.env.NODE_ENV === 'production' 
+            ? 'https://my.tapfeed.dk/login'
+            : 'http://localhost:3001/login',
+        failureMessage: true
+    }),
     function(req, res) {
+        // Log detaljeret session og bruger info
+        console.log('Google OAuth callback details:', {
+            sessionID: req.sessionID,
+            user: req.user,
+            session: req.session,
+            isAuthenticated: req.isAuthenticated(),
+            headers: req.headers
+        });
+
+        // Gem bruger ID i session
         req.session.userId = req.user._id;
-        res.redirect('http://localhost:3001/dashboard');
+        
+        // Gem session før redirect
+        req.session.save((err) => {
+            if (err) {
+                console.error('Session save error:', err);
+                return res.redirect(process.env.NODE_ENV === 'production'
+                    ? 'https://my.tapfeed.dk/login?error=session'
+                    : 'http://localhost:3001/login?error=session'
+                );
+            }
+
+            // Double-check session efter gem
+            console.log('Session after save:', {
+                sessionID: req.sessionID,
+                session: req.session,
+                userId: req.session.userId
+            });
+
+            // Redirect til dashboard med session ID som query parameter
+            const dashboardUrl = process.env.NODE_ENV === 'production'
+                ? `https://my.tapfeed.dk/dashboard?sessionId=${req.sessionID}`
+                : `http://localhost:3001/dashboard?sessionId=${req.sessionID}`;
+                
+            console.log('Redirecting to:', dashboardUrl);
+            res.redirect(dashboardUrl);
+        });
     }
 );
 
