@@ -918,13 +918,47 @@ app.post('/api/user/profile-image', authenticateToken, upload.single('image'), a
             return res.status(400).json({ message: 'Ingen fil uploadet' });
         }
 
-        // Upload buffer direkte til Cloudinary
-        const result = await cloudinary.uploader.upload_stream({
-            folder: 'profile-images',
-            transformation: [
-                { width: 300, height: 300, crop: 'fill' }
-            ]
-        }).end(req.file.buffer);
+        console.log('Modtaget fil:', {
+            originalname: req.file.originalname,
+            mimetype: req.file.mimetype,
+            size: req.file.size
+        });
+
+        // Upload til Cloudinary med stream
+        const result = await new Promise((resolve, reject) => {
+            const uploadOptions = {
+                folder: 'profile-images',
+                transformation: [
+                    { width: 300, height: 300, crop: 'fill' }
+                ],
+                resource_type: 'auto',
+                format: 'jpg'
+            };
+
+            const uploadStream = cloudinary.uploader.upload_stream(
+                uploadOptions,
+                (error, result) => {
+                    if (error) {
+                        console.error('Cloudinary upload fejl:', error);
+                        reject(error);
+                        return;
+                    }
+                    console.log('Cloudinary upload success:', result);
+                    resolve(result);
+                }
+            );
+
+            // Konverter buffer til stream og pipe til Cloudinary
+            const bufferStream = require('stream').Readable.from(req.file.buffer);
+            bufferStream.pipe(uploadStream);
+        });
+
+        console.log('Cloudinary upload resultat:', {
+            secure_url: result.secure_url,
+            public_id: result.public_id,
+            format: result.format,
+            version: result.version
+        });
 
         // Opdater bruger med nyt billede URL
         const user = await User.findByIdAndUpdate(
@@ -933,12 +967,20 @@ app.post('/api/user/profile-image', authenticateToken, upload.single('image'), a
             { new: true }
         ).select('-password');
 
+        console.log('Opdateret bruger:', {
+            id: user._id,
+            profileImage: user.profileImage
+        });
+
         res.json({
             message: 'Profilbillede opdateret',
             user
         });
     } catch (error) {
-        console.error('Fejl ved upload af profilbillede:', error);
+        console.error('Detaljeret fejl ved upload af profilbillede:', {
+            error: error.message,
+            stack: error.stack
+        });
         res.status(500).json({ message: 'Der opstod en serverfejl' });
     }
 });
@@ -1284,6 +1326,13 @@ app.get('/:standerId', async (req, res) => {
 
         // Hvis produktet er unclaimed, vis claim side
         if (stand.status === 'unclaimed') {
+            const frontendUrl = process.env.NODE_ENV === 'production' 
+                ? 'https://my.tapfeed.dk'
+                : 'http://localhost:3001';
+
+            const loginUrl = `${frontendUrl}/login?redirect=/claim/${stand.standerId}`;
+            const signupUrl = `${frontendUrl}/register?redirect=/claim/${stand.standerId}`;
+
             return res.send(`
                 <!DOCTYPE html>
                 <html>
@@ -1295,8 +1344,10 @@ app.get('/:standerId', async (req, res) => {
                     <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
                     <style>
                         :root {
-                            --primary-color: #2196f3;
-                            --primary-dark: #1976d2;
+                            --primary-color: #001F3F;
+                            --primary-dark: #001830;
+                            --secondary-color: #4CAF50;
+                            --secondary-dark: #388E3C;
                             --background-color: #f8fafc;
                             --text-color: #334155;
                             --text-light: #64748b;
@@ -1325,8 +1376,10 @@ app.get('/:standerId', async (req, res) => {
                         }
                         
                         .logo {
-                            width: 150px;
+                            width: 200px;
+                            height: auto;
                             margin-bottom: 24px;
+                            object-fit: contain;
                         }
                         
                         h1 {
@@ -1343,9 +1396,14 @@ app.get('/:standerId', async (req, res) => {
                             font-size: 16px;
                         }
                         
+                        .button-container {
+                            display: flex;
+                            gap: 16px;
+                            justify-content: center;
+                            flex-wrap: wrap;
+                        }
+                        
                         .button {
-                            background-color: var(--primary-color);
-                            color: white;
                             padding: 12px 24px;
                             border: none;
                             border-radius: 8px;
@@ -1355,10 +1413,26 @@ app.get('/:standerId', async (req, res) => {
                             font-weight: 500;
                             font-size: 16px;
                             transition: background-color 0.2s ease;
+                            min-width: 200px;
+                            text-align: center;
                         }
                         
-                        .button:hover {
+                        .button.primary {
+                            background-color: var(--primary-color);
+                            color: white;
+                        }
+                        
+                        .button.primary:hover {
                             background-color: var(--primary-dark);
+                        }
+                        
+                        .button.secondary {
+                            background-color: var(--secondary-color);
+                            color: white;
+                        }
+                        
+                        .button.secondary:hover {
+                            background-color: var(--secondary-dark);
                         }
 
                         @media (max-width: 640px) {
@@ -1377,17 +1451,19 @@ app.get('/:standerId', async (req, res) => {
                             
                             .button {
                                 width: 100%;
-                                text-align: center;
                             }
                         }
                     </style>
                 </head>
                 <body>
                     <div class="container">
-                        <img src="https://my.tapfeed.dk/static/media/tapfeed%20logo%20white%20wide%20transparent.132f1052a5f613662507c9d214c792b0.svg" alt="TapFeed Logo" class="logo">
+                        <img src="https://my.tapfeed.dk/static/media/tapfeed%20logo%20black%20wide%20transparent.e5a0c4b5f5e6c6c5c5c5c5c5.svg" alt="TapFeed Logo" class="logo">
                         <h1>Velkommen til TapFeed!</h1>
-                        <p>Dette produkt er endnu ikke aktiveret. For at begynde at bruge dit TapFeed produkt, skal du først logge ind eller oprette en konto.</p>
-                        <a href="${process.env.FRONTEND_URL}/claim/${stand.standerId}" class="button">Aktiver produkt</a>
+                        <p>Dette produkt er klar til at blive aktiveret. Vælg en af mulighederne nedenfor for at komme i gang.</p>
+                        <div class="button-container">
+                            <a href="${loginUrl}" class="button primary">Log ind</a>
+                            <a href="${signupUrl}" class="button secondary">Opret ny konto</a>
+                        </div>
                     </div>
                 </body>
                 </html>
@@ -1416,8 +1492,9 @@ app.get('/:standerId', async (req, res) => {
 });
 
 // Endpoint til at claime et produkt
-app.post('/api/stands/:standerId/claim', requireAuth, async (req, res) => {
+app.post('/api/stands/:standerId/claim', authenticateToken, async (req, res) => {
     try {
+        // Find produktet og tjek at det er unclaimed
         const stand = await Stand.findOne({ 
             standerId: req.params.standerId,
             status: 'unclaimed'
@@ -1431,9 +1508,11 @@ app.post('/api/stands/:standerId/claim', requireAuth, async (req, res) => {
 
         // Opdater stand med den nye ejer
         stand.status = 'claimed';
-        stand.ownerId = req.session.userId;
+        stand.ownerId = req.user._id;
+        stand.claimedAt = new Date();
         await stand.save();
 
+        // Send succes respons
         res.json({ 
             message: 'Produkt aktiveret succesfuldt',
             stand 

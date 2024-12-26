@@ -52,7 +52,7 @@ const userSchema = new mongoose.Schema({
     },
     profileImage: {
         type: String,
-        default: 'https://res.cloudinary.com/da6jy4nml/image/upload/v1/defaults/default-avatar.png'
+        default: 'https://res.cloudinary.com/da6jy4nml/image/upload/v1702320091/profile-images/default-avatar.png'
     },
     resetPasswordToken: String,
     resetPasswordExpires: Date
