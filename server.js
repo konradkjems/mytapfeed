@@ -34,6 +34,7 @@ const LandingPage = require('./models/LandingPage');
 const landingPagesRouter = require('./routes/landingPages');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
+const QRCode = require('qrcode');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -600,10 +601,126 @@ app.post('/api/logout', (req, res) => {
 });
 
 // Stands endpoints
+// Hent alle unclaimed stands
+app.get('/api/stands/unclaimed', requireAuth, async (req, res) => {
+    try {
+        // Tjek om brugeren er admin
+        const user = await User.findById(req.session.userId);
+        if (!user?.isAdmin) {
+            return res.status(403).json({ message: 'Kun administratorer kan se unclaimed produkter' });
+        }
+
+        const stands = await Stand.find({ status: 'unclaimed' })
+            .sort({ createdAt: -1 });
+        res.json(stands);
+    } catch (error) {
+        console.error('Fejl ved hentning af unclaimed stands:', error);
+        res.status(500).json({ message: 'Der opstod en fejl ved hentning af unclaimed produkter' });
+    }
+});
+
+// Download CSV af unclaimed stands
+app.get('/api/stands/unclaimed/csv', requireAuth, async (req, res) => {
+    try {
+        // Tjek om brugeren er admin
+        const user = await User.findById(req.session.userId);
+        if (!user?.isAdmin) {
+            return res.status(403).json({ message: 'Kun administratorer kan downloade produkt liste' });
+        }
+
+        // Hent valgte produkter hvis ids er angivet, ellers alle unclaimed
+        const query = { status: 'unclaimed' };
+        if (req.query.ids) {
+            const ids = req.query.ids.split(',');
+            query._id = { $in: ids };
+        }
+
+        const stands = await Stand.find(query)
+            .sort({ createdAt: -1 });
+
+        // Generer CSV indhold
+        const csvRows = ['Produkt ID,Produkttype,TapFeed URL,Oprettet'];
+        stands.forEach(stand => {
+            const tapfeedUrl = `https://api.tapfeed.dk/${stand.standerId}`;
+            csvRows.push(`${stand.standerId},${stand.productType},${tapfeedUrl},${new Date(stand.createdAt).toLocaleString('da-DK')}`);
+        });
+        const csvContent = csvRows.join('\n');
+
+        // Send CSV fil
+        res.setHeader('Content-Type', 'text/csv');
+        res.setHeader('Content-Disposition', 'attachment; filename=unclaimed-produkter.csv');
+        res.send(csvContent);
+    } catch (error) {
+        console.error('Fejl ved generering af CSV:', error);
+        res.status(500).json({ message: 'Der opstod en fejl ved generering af CSV fil' });
+    }
+});
+
+// Download QR koder som ZIP
+app.get('/api/stands/unclaimed/qr-codes', authenticateToken, async (req, res) => {
+    try {
+        // Tjek om brugeren er admin
+        const user = await User.findById(req.session.userId);
+        if (!user?.isAdmin) {
+            return res.status(403).json({ message: 'Kun administratorer kan downloade QR koder' });
+        }
+
+        // Hent valgte produkter hvis ids er angivet, ellers alle unclaimed
+        const query = { status: 'unclaimed' };
+        if (req.query.ids) {
+            const ids = req.query.ids.split(',');
+            query._id = { $in: ids };
+        }
+
+        const stands = await Stand.find(query)
+            .sort({ createdAt: -1 });
+
+        // Opret en ny ZIP fil
+        const AdmZip = require('adm-zip');
+        const zip = new AdmZip();
+
+        // Generer QR koder for hver stand og tilføj til ZIP
+        await Promise.all(stands.map(async stand => {
+            const tapfeedUrl = `https://api.tapfeed.dk/${stand.standerId}`;
+            
+            // Generer QR kode som PNG buffer
+            const qrBuffer = await QRCode.toBuffer(tapfeedUrl, {
+                errorCorrectionLevel: 'H',
+                type: 'png',
+                margin: 1,
+                width: 1000,
+                color: {
+                    dark: '#000000',
+                    light: '#ffffff'
+                }
+            });
+
+            // Tilføj QR kode til ZIP filen
+            zip.addFile(`QR Koder/${stand.standerId}.png`, qrBuffer);
+        }));
+
+        // Generer ZIP filen
+        const zipBuffer = zip.toBuffer();
+
+        // Send ZIP fil
+        res.setHeader('Content-Type', 'application/zip');
+        res.setHeader('Content-Disposition', 'attachment; filename=tapfeed-qr-koder.zip');
+        res.send(zipBuffer);
+    } catch (error) {
+        console.error('Fejl ved generering af QR koder:', error);
+        res.status(500).json({ message: 'Der opstod en fejl ved generering af QR koder' });
+    }
+});
+
+// Hent alle stands for en bruger
 app.get('/api/stands', requireAuth, async (req, res) => {
     try {
-        const stands = await Stand.find({ userId: req.session.userId })
-            .populate('userId', 'username');
+        const stands = await Stand.find({ 
+            $or: [
+                { ownerId: req.session.userId },
+                { userId: req.session.userId }  // For bagudkompatibilitet
+            ]
+        }).populate('ownerId', 'username');
         res.json(stands);
     } catch (error) {
         console.error('Fejl ved hentning af stands:', error);
@@ -611,39 +728,90 @@ app.get('/api/stands', requireAuth, async (req, res) => {
     }
 });
 
-app.post('/api/stands', authenticateToken, async (req, res) => {
+// Opret ny stand
+app.post('/api/stands', requireAuth, async (req, res) => {
     try {
+        const { standerId, redirectUrl, productType, nickname, status } = req.body;
+
+        // Tjek om standerID allerede eksisterer
+        const existingStand = await Stand.findOne({ standerId });
+        if (existingStand) {
+            return res.status(409).json({ message: 'Stander ID eksisterer allerede' });
+        }
+
         const stand = new Stand({
-            ...req.body,
-            userId: req.session.userId
+            standerId,
+            redirectUrl,
+            productType,
+            nickname,
+            status: status || 'claimed',
+            ownerId: req.session.userId,
+            userId: req.session.userId  // For bagudkompatibilitet
         });
+
         await stand.save();
         res.status(201).json(stand);
     } catch (error) {
-        console.error('Error creating stand:', error);
-        res.status(500).json({ message: 'Internal server error' });
+        console.error('Fejl ved oprettelse af stand:', error);
+        res.status(500).json({ message: 'Der opstod en fejl ved oprettelse af stand' });
     }
 });
 
+// Bulk opret stands
+app.post('/api/stands/bulk', requireAuth, async (req, res) => {
+    try {
+        const { products } = req.body;
+
+        // Tjek om brugeren er admin
+        const user = await User.findById(req.session.userId);
+        if (!user?.isAdmin) {
+            return res.status(403).json({ message: 'Kun administratorer kan oprette bulk produkter' });
+        }
+
+        // Tjek om nogle af produkt ID'erne allerede eksisterer
+        const existingStands = await Stand.find({
+            standerId: { $in: products.map(p => p.standerId) }
+        });
+
+        if (existingStands.length > 0) {
+            return res.status(409).json({
+                message: 'Nogle produkt ID\'er eksisterer allerede',
+                existingIds: existingStands.map(s => s.standerId)
+            });
+        }
+
+        // Opret alle produkter
+        const createdStands = await Stand.insertMany(products);
+
+        res.status(201).json({
+            message: `${createdStands.length} produkter oprettet succesfuldt`,
+            stands: createdStands
+        });
+    } catch (error) {
+        console.error('Fejl ved bulk oprettelse af produkter:', error);
+        res.status(500).json({
+            message: 'Der opstod en fejl ved oprettelse af produkterne',
+            error: error.message
+        });
+    }
+});
+
+// Opdater stand
 app.put('/api/stands/:id', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
         const { standerId, redirectUrl, productType, nickname } = req.body;
 
-        console.log('Modtaget opdateringsanmodning:', {
-            id,
-            standerId,
-            redirectUrl,
-            productType,
-            nickname,
-            userId: req.session.userId
-        });
-
         // Find den eksisterende stand først
-        const existingStand = await Stand.findOne({ _id: id, userId: req.session.userId });
+        const existingStand = await Stand.findOne({ 
+            _id: id,
+            $or: [
+                { ownerId: req.session.userId },
+                { userId: req.session.userId }  // For bagudkompatibilitet
+            ]
+        });
         
         if (!existingStand) {
-            console.log('Stand ikke fundet:', id);
             return res.status(404).json({ message: 'Stander ikke fundet' });
         }
 
@@ -655,34 +823,37 @@ app.put('/api/stands/:id', requireAuth, async (req, res) => {
             });
             
             if (duplicateStand) {
-                console.log('Duplikeret standerID:', standerId);
                 return res.status(409).json({ message: 'Stander ID eksisterer allerede' });
             }
         }
 
         // Opdater standen
         const updatedStand = await Stand.findOneAndUpdate(
-            { _id: id, userId: req.session.userId },
+            { 
+                _id: id,
+                $or: [
+                    { ownerId: req.session.userId },
+                    { userId: req.session.userId }  // For bagudkompatibilitet
+                ]
+            },
             { 
                 $set: {
                     standerId,
                     redirectUrl,
                     productType,
                     nickname,
-                    updatedAt: new Date()
+                    updatedAt: new Date(),
+                    ownerId: req.session.userId  // Opdater til det nye felt
                 }
             },
-            { new: true } // Returnerer det opdaterede dokument
+            { new: true }
         );
 
         if (!updatedStand) {
-            console.log('Kunne ikke opdatere stand:', id);
             return res.status(404).json({ message: 'Kunne ikke opdatere standeren' });
         }
 
-        console.log('Stand opdateret succesfuldt:', updatedStand);
         res.json(updatedStand);
-
     } catch (error) {
         console.error('Fejl ved opdatering af stand:', error);
         res.status(500).json({ message: 'Der opstod en fejl ved opdatering af stand' });
@@ -692,7 +863,13 @@ app.put('/api/stands/:id', requireAuth, async (req, res) => {
 app.delete('/api/stands/:id', requireAuth, async (req, res) => {
     try {
         const { id } = req.params;
-        const result = await Stand.deleteOne({ _id: id, userId: req.session.userId });
+        const result = await Stand.deleteOne({ 
+            _id: id, 
+            $or: [
+                { ownerId: req.session.userId },
+                { userId: req.session.userId }
+            ]
+        });
         
         if (result.deletedCount === 0) {
             return res.status(404).json({ message: 'Stander ikke fundet' });
@@ -818,6 +995,34 @@ app.get('/api/admin/users', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Fejl ved hentning af brugere:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved hentning af brugere' });
+  }
+});
+
+// Slet unclaimed produkter
+app.delete('/api/admin/stands/unclaimed', authenticateToken, async (req, res) => {
+  try {
+    // Tjek om brugeren er admin
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: 'Ingen adgang' });
+    }
+
+    const { ids } = req.body;
+    let query = { status: 'unclaimed' };
+    
+    // Hvis specifikke IDs er angivet, slet kun disse
+    if (ids && Array.isArray(ids) && ids.length > 0) {
+      query._id = { $in: ids };
+    }
+
+    const result = await Stand.deleteMany(query);
+    
+    res.json({ 
+      message: `${result.deletedCount} unclaimed produkter blev slettet`,
+      deletedCount: result.deletedCount 
+    });
+  } catch (error) {
+    console.error('Fejl ved sletning af unclaimed produkter:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved sletning af unclaimed produkter' });
   }
 });
 
@@ -1068,52 +1273,176 @@ app.post('/api/stands/reorder', authenticateToken, async (req, res) => {
     }
 });
 
-// Serve redirect page
+// Redirect endpoint for stands
 app.get('/:standerId', async (req, res) => {
     try {
         const stand = await Stand.findOne({ standerId: req.params.standerId });
+        
         if (!stand) {
             return res.status(404).send('Produkt ikke fundet');
         }
 
-        // Opdater antal kliks
-        stand.clicks = (stand.clicks || 0) + 1;
-        
-        // Tilføj klik til historikken
-        const clickData = {
-            timestamp: new Date(),
-            ip: req.ip
-        };
-        
-        if (!stand.clickHistory) {
-            stand.clickHistory = [];
-        }
-        stand.clickHistory.push(clickData);
+        // Hvis produktet er unclaimed, vis claim side
+        if (stand.status === 'unclaimed') {
+            return res.send(`
+                <!DOCTYPE html>
+                <html>
+                <head>
+                    <title>Claim dit TapFeed produkt</title>
+                    <meta name="viewport" content="width=device-width, initial-scale=1">
+                    <link rel="preconnect" href="https://fonts.googleapis.com">
+                    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
+                    <style>
+                        :root {
+                            --primary-color: #2196f3;
+                            --primary-dark: #1976d2;
+                            --background-color: #f8fafc;
+                            --text-color: #334155;
+                            --text-light: #64748b;
+                        }
+                        
+                        body {
+                            font-family: 'Inter', sans-serif;
+                            margin: 0;
+                            padding: 20px;
+                            display: flex;
+                            flex-direction: column;
+                            align-items: center;
+                            min-height: 100vh;
+                            background-color: var(--background-color);
+                            color: var(--text-color);
+                        }
+                        
+                        .container {
+                            max-width: 600px;
+                            width: 100%;
+                            background: white;
+                            padding: 32px;
+                            border-radius: 16px;
+                            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
+                            text-align: center;
+                        }
+                        
+                        .logo {
+                            width: 150px;
+                            margin-bottom: 24px;
+                        }
+                        
+                        h1 {
+                            font-size: 24px;
+                            font-weight: 600;
+                            margin-bottom: 16px;
+                            color: var(--text-color);
+                        }
+                        
+                        p {
+                            color: var(--text-light);
+                            line-height: 1.6;
+                            margin-bottom: 24px;
+                            font-size: 16px;
+                        }
+                        
+                        .button {
+                            background-color: var(--primary-color);
+                            color: white;
+                            padding: 12px 24px;
+                            border: none;
+                            border-radius: 8px;
+                            cursor: pointer;
+                            text-decoration: none;
+                            display: inline-block;
+                            font-weight: 500;
+                            font-size: 16px;
+                            transition: background-color 0.2s ease;
+                        }
+                        
+                        .button:hover {
+                            background-color: var(--primary-dark);
+                        }
 
-        // Gem ændringerne før vi sender respons
-        try {
-            await stand.save();
-            console.log('Klik registreret for stand:', {
-                standerId: stand.standerId,
-                newClickCount: stand.clicks,
-                timestamp: clickData.timestamp,
-                redirectUrl: stand.redirectUrl
+                        @media (max-width: 640px) {
+                            .container {
+                                padding: 24px;
+                                margin: 16px;
+                            }
+                            
+                            h1 {
+                                font-size: 20px;
+                            }
+                            
+                            p {
+                                font-size: 14px;
+                            }
+                            
+                            .button {
+                                width: 100%;
+                                text-align: center;
+                            }
+                        }
+                    </style>
+                </head>
+                <body>
+                    <div class="container">
+                        <img src="https://my.tapfeed.dk/static/media/tapfeed%20logo%20white%20wide%20transparent.132f1052a5f613662507c9d214c792b0.svg" alt="TapFeed Logo" class="logo">
+                        <h1>Velkommen til TapFeed!</h1>
+                        <p>Dette produkt er endnu ikke aktiveret. For at begynde at bruge dit TapFeed produkt, skal du først logge ind eller oprette en konto.</p>
+                        <a href="${process.env.FRONTEND_URL}/claim/${stand.standerId}" class="button">Aktiver produkt</a>
+                    </div>
+                </body>
+                </html>
+            `);
+        }
+
+        // Hvis produktet er claimed og har en redirectUrl, redirect til den
+        if (stand.redirectUrl) {
+            // Registrer klik
+            stand.clicks = (stand.clicks || 0) + 1;
+            stand.clickHistory.push({
+                timestamp: new Date(),
+                ip: req.ip
             });
-        } catch (saveError) {
-            console.error('Fejl ved gemning af klik:', saveError);
+            await stand.save();
+            
+            return res.redirect(stand.redirectUrl);
         }
 
-        // Sikr at redirectUrl har http:// eller https://
-        let redirectUrl = stand.redirectUrl;
-        if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
-            redirectUrl = 'https://' + redirectUrl;
-        }
-
-        // Redirect direkte
-        res.redirect(redirectUrl);
+        // Hvis produktet er claimed men ikke har en redirectUrl
+        return res.send('Dette produkt er ikke konfigureret endnu');
     } catch (error) {
-        console.error('Fejl ved redirect:', error);
-        res.status(500).send('Der opstod en serverfejl');
+        console.error('Fejl ved håndtering af redirect:', error);
+        res.status(500).send('Der opstod en fejl');
+    }
+});
+
+// Endpoint til at claime et produkt
+app.post('/api/stands/:standerId/claim', requireAuth, async (req, res) => {
+    try {
+        const stand = await Stand.findOne({ 
+            standerId: req.params.standerId,
+            status: 'unclaimed'
+        });
+
+        if (!stand) {
+            return res.status(404).json({ 
+                message: 'Produkt ikke fundet eller er allerede aktiveret' 
+            });
+        }
+
+        // Opdater stand med den nye ejer
+        stand.status = 'claimed';
+        stand.ownerId = req.session.userId;
+        await stand.save();
+
+        res.json({ 
+            message: 'Produkt aktiveret succesfuldt',
+            stand 
+        });
+    } catch (error) {
+        console.error('Fejl ved aktivering af produkt:', error);
+        res.status(500).json({ 
+            message: 'Der opstod en fejl ved aktivering af produktet' 
+        });
     }
 });
 

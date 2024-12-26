@@ -20,17 +20,22 @@ const standSchema = new mongoose.Schema({
     },
     redirectUrl: {
         type: String,
-        required: true
+        required: false
     },
     productType: {
         type: String,
         enum: ['stander', 'sticker', 'kort', 'plate'],
         required: true
     },
-    userId: {
+    status: {
+        type: String,
+        enum: ['unclaimed', 'claimed'],
+        default: 'unclaimed'
+    },
+    ownerId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User',
-        required: true
+        required: false
     },
     categoryId: {
         type: mongoose.Schema.Types.ObjectId,
