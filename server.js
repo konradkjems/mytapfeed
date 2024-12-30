@@ -1341,11 +1341,15 @@ app.get('/:standerId', async (req, res) => {
       return res.status(404).json({ message: 'Produkt ikke fundet' });
     }
 
+    // Definer frontend URL baseret på miljø
+    const frontendUrl = process.env.NODE_ENV === 'production'
+      ? 'https://my.tapfeed.dk'
+      : 'http://localhost:3001';
+
     if (stand.status === 'unclaimed') {
       // Hvis produktet ikke er claimed, redirect til claim side
       const loginUrl = `${frontendUrl}/login?redirect=/claim/${stand.standerId}`;
-      const signupUrl = `${frontendUrl}/register?redirect=/claim/${stand.standerId}`;
-      return res.json({ loginUrl, signupUrl });
+      return res.redirect(loginUrl);
     }
 
     // Hvis produktet har en landing page, redirect til den
@@ -1353,11 +1357,20 @@ app.get('/:standerId', async (req, res) => {
       return res.redirect(`${frontendUrl}/landing/${stand.landingPageId}`);
     }
 
-    // Ellers redirect til brugerens dashboard
+    // Hvis produktet har en redirect URL, brug den
+    if (stand.redirectUrl) {
+      // Sikr at URL'en starter med http:// eller https://
+      const redirectUrl = stand.redirectUrl.startsWith('http') 
+        ? stand.redirectUrl 
+        : `https://${stand.redirectUrl}`;
+      return res.redirect(redirectUrl);
+    }
+
+    // Hvis ingen redirect URL eller landing page er sat, redirect til dashboard
     res.redirect(`${frontendUrl}/dashboard`);
   } catch (error) {
     console.error('Fejl ved redirect:', error);
-    res.status(500).json({ message: 'Der opstod en fejl' });
+    res.status(500).json({ message: 'Der opstod en fejl ved håndtering af redirect' });
   }
 });
 
