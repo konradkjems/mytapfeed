@@ -6,6 +6,19 @@ const landingPageSchema = new mongoose.Schema({
     ref: 'User',
     required: true
   },
+  urlPath: {
+    type: String,
+    unique: true,
+    sparse: true,
+    lowercase: true,
+    trim: true,
+    validate: {
+      validator: function(v) {
+        return /^[a-z0-9-]+$/.test(v);
+      },
+      message: props => `${props.value} er ikke en gyldig URL sti. Brug kun små bogstaver, tal og bindestreger.`
+    }
+  },
   title: {
     type: String,
     required: true

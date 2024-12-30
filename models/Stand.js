@@ -1,31 +1,21 @@
 const mongoose = require('mongoose');
 
-const clickHistorySchema = new mongoose.Schema({
-    timestamp: {
-        type: Date,
-        default: Date.now
-    },
-    ip: String
-});
-
 const standSchema = new mongoose.Schema({
     standerId: {
         type: String,
         required: true,
         unique: true
     },
-    nickname: {
-        type: String,
-        required: false
-    },
     redirectUrl: {
-        type: String,
-        required: false
+        type: String
     },
     productType: {
         type: String,
         enum: ['stander', 'sticker', 'kort', 'plate'],
-        required: true
+        default: 'stander'
+    },
+    nickname: {
+        type: String
     },
     status: {
         type: String,
@@ -34,32 +24,27 @@ const standSchema = new mongoose.Schema({
     },
     ownerId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'User',
-        required: false
+        ref: 'User'
     },
-    categoryId: {
+    userId: {
         type: mongoose.Schema.Types.ObjectId,
-        ref: 'Category'
+        ref: 'User'
     },
-    order: {
-        type: Number,
-        default: 0
+    landingPageId: {
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'LandingPage'
     },
     clicks: {
         type: Number,
         default: 0
     },
-    clickHistory: [clickHistorySchema],
+    claimedAt: {
+        type: Date
+    },
     createdAt: {
         type: Date,
         default: Date.now
-    },
-    updatedAt: {
-        type: Date,
-        default: Date.now
     }
-}, {
-    timestamps: true
 });
 
 module.exports = mongoose.model('Stand', standSchema); 

@@ -89,7 +89,53 @@ if (!app) {
     app = express();
 }
 
-// Middleware setup
+// Funktion til at tjekke om en request kommer fra et subdomain
+const getSubdomain = (host) => {
+  const parts = host.split('.');
+  if (parts.length > 2) {
+    return parts[0];
+  }
+  return null;
+};
+
+// Middleware til at håndtere subdomains
+app.use(async (req, res, next) => {
+  const subdomain = getSubdomain(req.hostname);
+  
+  if (subdomain) {
+    try {
+      const landingPage = await LandingPage.findOne({ subdomain });
+      if (landingPage) {
+        // Send landing page data
+        return res.json(landingPage);
+      }
+    } catch (error) {
+      console.error('Fejl ved håndtering af subdomain:', error);
+    }
+  }
+  next();
+});
+
+// Tilføj denne nye route i stedet
+app.get('/:urlPath', async (req, res, next) => {
+  try {
+    const landingPage = await LandingPage.findOne({ urlPath: req.params.urlPath });
+    if (landingPage) {
+      // Redirect til frontend med landing page ID
+      const frontendUrl = process.env.NODE_ENV === 'production'
+        ? 'https://my.tapfeed.dk'
+        : 'http://localhost:3001';
+      return res.redirect(`${frontendUrl}/landing/${landingPage._id}`);
+    }
+    // Hvis ingen landing page findes, fortsæt til næste route
+    next();
+  } catch (error) {
+    console.error('Fejl ved håndtering af URL path:', error);
+    next(error);
+  }
+});
+
+// Cors setup
 app.use(cors({
     origin: process.env.NODE_ENV === 'production' 
         ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk', 'https://tapfeed.dk', /\.tapfeed\.dk$/]
@@ -256,21 +302,18 @@ app.get('/api/auth/status', (req, res) => {
     console.log('Auth status check:', {
         sessionID: req.sessionID,
         session: req.session,
-        isAuthenticated: req.isAuthenticated(),
         user: req.user,
-        userId: req.session?.userId
+        isAuthenticated: req.isAuthenticated()
     });
-    
-    if (req.isAuthenticated() || req.session?.userId) {
-        res.json({ 
-            isAuthenticated: true, 
-            user: req.user || req.session.userId
-        });
-    } else {
-        res.json({ 
-            isAuthenticated: false 
-        });
-    }
+
+    res.json({
+        isAuthenticated: req.isAuthenticated(),
+        user: req.user ? {
+            id: req.user._id,
+            username: req.user.username,
+            email: req.user.email
+        } : null
+    });
 });
 
 app.post('/api/auth/logout', (req, res) => {
@@ -414,7 +457,7 @@ app.get('/api/auth/google/callback',
     }),
     function(req, res) {
         // Log detaljeret session og bruger info
-        console.log('Google OAuth callback details:', {
+        console.log('Google OAuth callback detaljer:', {
             sessionID: req.sessionID,
             user: req.user,
             session: req.session,
@@ -428,7 +471,7 @@ app.get('/api/auth/google/callback',
         // Gem session før redirect
         req.session.save((err) => {
             if (err) {
-                console.error('Session save error:', err);
+                console.error('Fejl ved gem af session:', err);
                 return res.redirect(process.env.NODE_ENV === 'production'
                     ? 'https://my.tapfeed.dk/login?error=session'
                     : 'http://localhost:3001/login?error=session'
@@ -436,19 +479,20 @@ app.get('/api/auth/google/callback',
             }
 
             // Double-check session efter gem
-            console.log('Session after save:', {
+            console.log('Session efter gem:', {
                 sessionID: req.sessionID,
                 session: req.session,
                 userId: req.session.userId
             });
 
-            // Redirect til dashboard med session ID som query parameter
-            const dashboardUrl = process.env.NODE_ENV === 'production'
-                ? `https://my.tapfeed.dk/dashboard?sessionId=${req.sessionID}`
-                : `http://localhost:3001/dashboard?sessionId=${req.sessionID}`;
-                
-            console.log('Redirecting to:', dashboardUrl);
-            res.redirect(dashboardUrl);
+            // Redirect til frontend med session ID
+            const frontendUrl = process.env.NODE_ENV === 'production'
+                ? 'https://my.tapfeed.dk'
+                : 'http://localhost:3001';
+            
+            const redirectUrl = `${frontendUrl}/login?sessionId=${req.sessionID}`;
+            console.log('Redirecter til:', redirectUrl);
+            res.redirect(redirectUrl);
         });
     }
 );
@@ -718,9 +762,9 @@ app.get('/api/stands', requireAuth, async (req, res) => {
         const stands = await Stand.find({ 
             $or: [
                 { ownerId: req.session.userId },
-                { userId: req.session.userId }  // For bagudkompatibilitet
+                { userId: req.session.userId }
             ]
-        }).populate('ownerId', 'username');
+        }).populate('landingPageId');
         res.json(stands);
     } catch (error) {
         console.error('Fejl ved hentning af stands:', error);
@@ -797,67 +841,40 @@ app.post('/api/stands/bulk', requireAuth, async (req, res) => {
 });
 
 // Opdater stand
-app.put('/api/stands/:id', requireAuth, async (req, res) => {
-    try {
-        const { id } = req.params;
-        const { standerId, redirectUrl, productType, nickname } = req.body;
-
-        // Find den eksisterende stand først
-        const existingStand = await Stand.findOne({ 
-            _id: id,
-            $or: [
-                { ownerId: req.session.userId },
-                { userId: req.session.userId }  // For bagudkompatibilitet
-            ]
-        });
-        
-        if (!existingStand) {
-            return res.status(404).json({ message: 'Stander ikke fundet' });
-        }
-
-        // Tjek om det nye standerID allerede eksisterer (hvis det er ændret)
-        if (standerId !== existingStand.standerId) {
-            const duplicateStand = await Stand.findOne({ 
-                standerId, 
-                _id: { $ne: id } 
-            });
-            
-            if (duplicateStand) {
-                return res.status(409).json({ message: 'Stander ID eksisterer allerede' });
-            }
-        }
-
-        // Opdater standen
-        const updatedStand = await Stand.findOneAndUpdate(
-            { 
-                _id: id,
-                $or: [
-                    { ownerId: req.session.userId },
-                    { userId: req.session.userId }  // For bagudkompatibilitet
-                ]
-            },
-            { 
-                $set: {
-                    standerId,
-                    redirectUrl,
-                    productType,
-                    nickname,
-                    updatedAt: new Date(),
-                    ownerId: req.session.userId  // Opdater til det nye felt
-                }
-            },
-            { new: true }
-        );
-
-        if (!updatedStand) {
-            return res.status(404).json({ message: 'Kunne ikke opdatere standeren' });
-        }
-
-        res.json(updatedStand);
-    } catch (error) {
-        console.error('Fejl ved opdatering af stand:', error);
-        res.status(500).json({ message: 'Der opstod en fejl ved opdatering af stand' });
+app.put('/api/stands/:id', authenticateToken, async (req, res) => {
+  try {
+    const { nickname, landingPageId } = req.body;
+    
+    // Tjek om landing page eksisterer og tilhører brugeren
+    if (landingPageId) {
+      const landingPage = await LandingPage.findOne({
+        _id: landingPageId,
+        userId: req.session.userId
+      });
+      
+      if (!landingPage) {
+        return res.status(404).json({ message: 'Landing page ikke fundet' });
+      }
     }
+
+    const stand = await Stand.findOneAndUpdate(
+      { _id: req.params.id, userId: req.session.userId },
+      { 
+        nickname,
+        landingPageId: landingPageId || null
+      },
+      { new: true }
+    );
+
+    if (!stand) {
+      return res.status(404).json({ message: 'Produkt ikke fundet' });
+    }
+
+    res.json(stand);
+  } catch (error) {
+    console.error('Fejl ved opdatering af produkt:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved opdatering af produkt' });
+  }
 });
 
 app.delete('/api/stands/:id', requireAuth, async (req, res) => {
@@ -1317,178 +1334,31 @@ app.post('/api/stands/reorder', authenticateToken, async (req, res) => {
 
 // Redirect endpoint for stands
 app.get('/:standerId', async (req, res) => {
-    try {
-        const stand = await Stand.findOne({ standerId: req.params.standerId });
-        
-        if (!stand) {
-            return res.status(404).send('Produkt ikke fundet');
-        }
-
-        // Hvis produktet er unclaimed, vis claim side
-        if (stand.status === 'unclaimed') {
-            const frontendUrl = process.env.NODE_ENV === 'production' 
-                ? 'https://my.tapfeed.dk'
-                : 'http://localhost:3001';
-
-            const loginUrl = `${frontendUrl}/login?redirect=/claim/${stand.standerId}`;
-            const signupUrl = `${frontendUrl}/register?redirect=/claim/${stand.standerId}`;
-
-            return res.send(`
-                <!DOCTYPE html>
-                <html>
-                <head>
-                    <title>Claim dit TapFeed produkt</title>
-                    <meta name="viewport" content="width=device-width, initial-scale=1">
-                    <link rel="preconnect" href="https://fonts.googleapis.com">
-                    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-                    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
-                    <style>
-                        :root {
-                            --primary-color: #001F3F;
-                            --primary-dark: #001830;
-                            --secondary-color: #4CAF50;
-                            --secondary-dark: #388E3C;
-                            --background-color: #f8fafc;
-                            --text-color: #334155;
-                            --text-light: #64748b;
-                        }
-                        
-                        body {
-                            font-family: 'Inter', sans-serif;
-                            margin: 0;
-                            padding: 20px;
-                            display: flex;
-                            flex-direction: column;
-                            align-items: center;
-                            min-height: 100vh;
-                            background-color: var(--background-color);
-                            color: var(--text-color);
-                        }
-                        
-                        .container {
-                            max-width: 600px;
-                            width: 100%;
-                            background: white;
-                            padding: 32px;
-                            border-radius: 16px;
-                            box-shadow: 0 4px 6px -1px rgb(0 0 0 / 0.1), 0 2px 4px -2px rgb(0 0 0 / 0.1);
-                            text-align: center;
-                        }
-                        
-                        .logo {
-                            width: 200px;
-                            height: auto;
-                            margin-bottom: 24px;
-                            object-fit: contain;
-                        }
-                        
-                        h1 {
-                            font-size: 24px;
-                            font-weight: 600;
-                            margin-bottom: 16px;
-                            color: var(--text-color);
-                        }
-                        
-                        p {
-                            color: var(--text-light);
-                            line-height: 1.6;
-                            margin-bottom: 24px;
-                            font-size: 16px;
-                        }
-                        
-                        .button-container {
-                            display: flex;
-                            gap: 16px;
-                            justify-content: center;
-                            flex-wrap: wrap;
-                        }
-                        
-                        .button {
-                            padding: 12px 24px;
-                            border: none;
-                            border-radius: 8px;
-                            cursor: pointer;
-                            text-decoration: none;
-                            display: inline-block;
-                            font-weight: 500;
-                            font-size: 16px;
-                            transition: background-color 0.2s ease;
-                            min-width: 200px;
-                            text-align: center;
-                        }
-                        
-                        .button.primary {
-                            background-color: var(--primary-color);
-                            color: white;
-                        }
-                        
-                        .button.primary:hover {
-                            background-color: var(--primary-dark);
-                        }
-                        
-                        .button.secondary {
-                            background-color: var(--secondary-color);
-                            color: white;
-                        }
-                        
-                        .button.secondary:hover {
-                            background-color: var(--secondary-dark);
-                        }
-
-                        @media (max-width: 640px) {
-                            .container {
-                                padding: 24px;
-                                margin: 16px;
-                            }
-                            
-                            h1 {
-                                font-size: 20px;
-                            }
-                            
-                            p {
-                                font-size: 14px;
-                            }
-                            
-                            .button {
-                                width: 100%;
-                            }
-                        }
-                    </style>
-                </head>
-                <body>
-                    <div class="container">
-                        <img src="https://my.tapfeed.dk/static/media/tapfeed%20logo%20black%20wide%20transparent.e5a0c4b5f5e6c6c5c5c5c5c5.svg" alt="TapFeed Logo" class="logo">
-                        <h1>Velkommen til TapFeed!</h1>
-                        <p>Dette produkt er klar til at blive aktiveret. Vælg en af mulighederne nedenfor for at komme i gang.</p>
-                        <div class="button-container">
-                            <a href="${loginUrl}" class="button primary">Log ind</a>
-                            <a href="${signupUrl}" class="button secondary">Opret ny konto</a>
-                        </div>
-                    </div>
-                </body>
-                </html>
-            `);
-        }
-
-        // Hvis produktet er claimed og har en redirectUrl, redirect til den
-        if (stand.redirectUrl) {
-            // Registrer klik
-            stand.clicks = (stand.clicks || 0) + 1;
-            stand.clickHistory.push({
-                timestamp: new Date(),
-                ip: req.ip
-            });
-            await stand.save();
-            
-            return res.redirect(stand.redirectUrl);
-        }
-
-        // Hvis produktet er claimed men ikke har en redirectUrl
-        return res.send('Dette produkt er ikke konfigureret endnu');
-    } catch (error) {
-        console.error('Fejl ved håndtering af redirect:', error);
-        res.status(500).send('Der opstod en fejl');
+  try {
+    const stand = await Stand.findOne({ standerId: req.params.standerId });
+    
+    if (!stand) {
+      return res.status(404).json({ message: 'Produkt ikke fundet' });
     }
+
+    if (stand.status === 'unclaimed') {
+      // Hvis produktet ikke er claimed, redirect til claim side
+      const loginUrl = `${frontendUrl}/login?redirect=/claim/${stand.standerId}`;
+      const signupUrl = `${frontendUrl}/register?redirect=/claim/${stand.standerId}`;
+      return res.json({ loginUrl, signupUrl });
+    }
+
+    // Hvis produktet har en landing page, redirect til den
+    if (stand.landingPageId) {
+      return res.redirect(`${frontendUrl}/landing/${stand.landingPageId}`);
+    }
+
+    // Ellers redirect til brugerens dashboard
+    res.redirect(`${frontendUrl}/dashboard`);
+  } catch (error) {
+    console.error('Fejl ved redirect:', error);
+    res.status(500).json({ message: 'Der opstod en fejl' });
+  }
 });
 
 // Endpoint til at claime et produkt
@@ -2011,25 +1881,34 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
 });
 
 // Landing Pages endpoints
-app.post('/api/landing-pages', authenticateToken, landingPagesLimiter, upload.fields([
+app.post('/api/landing-pages', authenticateToken, upload.fields([
   { name: 'logo', maxCount: 1 },
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    console.log('Modtaget landing page data:', req.body);
-    console.log('Modtaget filer:', req.files);
-    
     const { 
       title, 
       description, 
+      urlPath,
       backgroundColor, 
       buttonColor, 
       buttonTextColor,
       titleColor,
+      descriptionColor,
       buttons,
       showTitle,
       socialLinks 
     } = req.body;
+    
+    // Tjek om URL-stien allerede er i brug
+    if (urlPath) {
+      const existingPage = await LandingPage.findOne({ urlPath });
+      if (existingPage) {
+        return res.status(400).json({ 
+          message: 'Denne URL-sti er allerede i brug. Vælg venligst en anden.' 
+        });
+      }
+    }
     
     // Upload billeder til Cloudinary hvis de findes
     let logoUrl = null;
@@ -2067,18 +1946,18 @@ app.post('/api/landing-pages', authenticateToken, landingPagesLimiter, upload.fi
       userId: req.session.userId,
       title,
       description,
+      urlPath,
       logo: logoUrl,
       backgroundImage: backgroundImageUrl,
       backgroundColor,
       buttonColor,
       buttonTextColor,
       titleColor,
+      descriptionColor,
       buttons: JSON.parse(buttons || '[]'),
       showTitle: showTitle === 'true',
       socialLinks: JSON.parse(socialLinks || '{}')
     });
-
-    console.log('Gemmer landing page:', page);
 
     await page.save();
     res.status(201).json(page);
@@ -2098,28 +1977,53 @@ app.get('/api/landing-pages', authenticateToken, landingPagesLimiter, async (req
   }
 });
 
-app.put('/api/landing-pages/:id', authenticateToken, landingPagesLimiter, upload.fields([
+app.put('/api/landing-pages/:id', authenticateToken, upload.fields([
   { name: 'logo', maxCount: 1 },
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    console.log('Modtaget opdateringsdata:', req.body);
-    console.log('Modtaget filer:', req.files);
+    const { 
+      title, 
+      description, 
+      urlPath,
+      backgroundColor, 
+      buttonColor, 
+      buttonTextColor,
+      titleColor,
+      descriptionColor,
+      buttons,
+      showTitle,
+      socialLinks 
+    } = req.body;
     
-    const { title, description, backgroundColor, buttonColor, buttonTextColor, titleColor, buttons, showTitle, socialLinks } = req.body;
+    // Tjek om URL-stien allerede er i brug af en anden landing page
+    if (urlPath) {
+      const existingPage = await LandingPage.findOne({ 
+        urlPath, 
+        _id: { $ne: req.params.id } 
+      });
+      if (existingPage) {
+        return res.status(400).json({ 
+          message: 'Denne URL-sti er allerede i brug. Vælg venligst en anden.' 
+        });
+      }
+    }
+
     const updates = {
       title,
       description,
+      urlPath,
       backgroundColor,
       buttonColor,
       buttonTextColor,
       titleColor,
+      descriptionColor,
       buttons: JSON.parse(buttons || '[]'),
       showTitle: showTitle === 'true',
       socialLinks: JSON.parse(socialLinks || '{}')
     };
 
-    if (req.files.logo) {
+    if (req.files?.logo) {
       const logoResult = await new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
           { folder: 'landing-pages/logos' },
@@ -2133,7 +2037,7 @@ app.put('/api/landing-pages/:id', authenticateToken, landingPagesLimiter, upload
       updates.logo = logoResult.secure_url;
     }
 
-    if (req.files.backgroundImage) {
+    if (req.files?.backgroundImage) {
       const backgroundResult = await new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
           { folder: 'landing-pages/backgrounds' },
@@ -2157,7 +2061,6 @@ app.put('/api/landing-pages/:id', authenticateToken, landingPagesLimiter, upload
       return res.status(404).json({ message: 'Landing page ikke fundet' });
     }
 
-    console.log('Opdateret landing page:', page);
     res.json(page);
   } catch (error) {
     console.error('Fejl ved opdatering af landing page:', error);
