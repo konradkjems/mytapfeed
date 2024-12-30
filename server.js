@@ -1347,9 +1347,8 @@ app.get('/:standerId', async (req, res) => {
       : 'http://localhost:3001';
 
     if (stand.status === 'unclaimed') {
-      // Hvis produktet ikke er claimed, redirect til claim side
-      const loginUrl = `${frontendUrl}/login?redirect=/claim/${stand.standerId}`;
-      return res.redirect(loginUrl);
+      // Hvis produktet ikke er claimed, redirect direkte til claim siden
+      return res.redirect(`${frontendUrl}/claim/${stand.standerId}`);
     }
 
     // Hvis produktet har en landing page, redirect til den
