@@ -38,6 +38,12 @@ const standSchema = new mongoose.Schema({
         type: Number,
         default: 0
     },
+    clickHistory: [{
+        timestamp: {
+            type: Date,
+            default: Date.now
+        }
+    }],
     claimedAt: {
         type: Date
     },

@@ -1343,7 +1343,10 @@ app.get('/:standerId', async (req, res) => {
 
     // Registrer klik hvis produktet er claimed
     if (stand.status === 'claimed') {
-      await Stand.findByIdAndUpdate(stand._id, { $inc: { clicks: 1 } });
+      await Stand.findByIdAndUpdate(stand._id, { 
+        $inc: { clicks: 1 },
+        $push: { clickHistory: { timestamp: new Date() } }
+      });
     }
 
     // Definer frontend URL baseret på miljø
@@ -1420,14 +1423,18 @@ app.post('/api/stands/:standerId/claim', authenticateToken, async (req, res) => 
 // Registrer klik på stand
 app.post('/api/stands/:standId/click', async (req, res) => {
     try {
-        const stand = await Stand.findById(req.params.standId);
+        const stand = await Stand.findByIdAndUpdate(
+            req.params.standId,
+            { 
+                $inc: { clicks: 1 },
+                $push: { clickHistory: { timestamp: new Date() } }
+            },
+            { new: true }
+        );
+
         if (!stand) {
             return res.status(404).json({ message: 'Produkt ikke fundet' });
         }
-
-        // Opdater antal kliks
-        stand.clicks = (stand.clicks || 0) + 1;
-        await stand.save();
 
         res.json({ message: 'Klik registreret', clicks: stand.clicks });
     } catch (error) {
