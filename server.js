@@ -1341,6 +1341,11 @@ app.get('/:standerId', async (req, res) => {
       return res.status(404).json({ message: 'Produkt ikke fundet' });
     }
 
+    // Registrer klik hvis produktet er claimed
+    if (stand.status === 'claimed') {
+      await Stand.findByIdAndUpdate(stand._id, { $inc: { clicks: 1 } });
+    }
+
     // Definer frontend URL baseret på miljø
     const frontendUrl = process.env.NODE_ENV === 'production'
       ? 'https://my.tapfeed.dk'
