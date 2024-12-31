@@ -1347,8 +1347,13 @@ app.get('/:standerId', async (req, res) => {
       : 'http://localhost:3001';
 
     if (stand.status === 'unclaimed') {
-      // Hvis produktet ikke er claimed, redirect direkte til claim siden
+      // Hvis produktet ikke er claimed, redirect til claim siden
       return res.redirect(`${frontendUrl}/claim/${stand.standerId}`);
+    }
+
+    // Hvis produktet er claimed men ikke har nogen redirect URL eller landing page
+    if (stand.status === 'claimed' && !stand.redirectUrl && !stand.landingPageId) {
+      return res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
     }
 
     // Hvis produktet har en landing page, redirect til den
@@ -1365,8 +1370,8 @@ app.get('/:standerId', async (req, res) => {
       return res.redirect(redirectUrl);
     }
 
-    // Hvis ingen redirect URL eller landing page er sat, redirect til dashboard
-    res.redirect(`${frontendUrl}/dashboard`);
+    // Hvis ingen redirect URL eller landing page er sat, redirect til not-configured siden
+    res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
   } catch (error) {
     console.error('Fejl ved redirect:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved håndtering af redirect' });
