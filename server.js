@@ -295,6 +295,59 @@ const authenticateToken = async (req, res, next) => {
     }
 };
 
+// Hent alle unclaimed stands (før det generelle endpoint)
+app.get('/api/stands/unclaimed', authenticateToken, async (req, res) => {
+    try {
+        // Tjek om brugeren er admin
+        if (!req.user.isAdmin) {
+            return res.status(403).json({ message: 'Kun administratorer kan se unclaimed produkter' });
+        }
+
+        const stands = await Stand.find({ status: 'unclaimed' })
+            .sort({ createdAt: -1 });
+
+        console.log('Hentede unclaimed stands:', {
+            count: stands.length,
+            stands: stands.map(s => ({
+                id: s._id,
+                standerId: s.standerId,
+                status: s.status,
+                createdAt: s.createdAt
+            }))
+        });
+
+        res.json(stands);
+    } catch (error) {
+        console.error('Fejl ved hentning af unclaimed stands:', error);
+        res.status(500).json({ message: 'Der opstod en fejl ved hentning af unclaimed produkter' });
+    }
+});
+
+// Offentligt endpoint til at hente et enkelt produkt baseret på standerId
+app.get('/api/stands/:standerId', async (req, res) => {
+  try {
+    const stand = await Stand.findOne({ standerId: req.params.standerId });
+    
+    if (!stand) {
+      return res.status(404).json({ message: 'Produkt ikke fundet' });
+    }
+
+    // Send kun de nødvendige offentlige informationer
+    const publicStand = {
+      _id: stand._id,
+      standerId: stand.standerId,
+      status: stand.status,
+      redirectUrl: stand.redirectUrl,
+      landingPageId: stand.landingPageId
+    };
+
+    res.json(publicStand);
+  } catch (error) {
+    console.error('Fejl ved hentning af produkt:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af produkt' });
+  }
+});
+
 // Beskyttede routes
 app.use('/api/stands', authenticateToken);
 
@@ -646,16 +699,26 @@ app.post('/api/logout', (req, res) => {
 
 // Stands endpoints
 // Hent alle unclaimed stands
-app.get('/api/stands/unclaimed', requireAuth, async (req, res) => {
+app.get('/api/stands/unclaimed', authenticateToken, async (req, res) => {
     try {
         // Tjek om brugeren er admin
-        const user = await User.findById(req.session.userId);
-        if (!user?.isAdmin) {
+        if (!req.user.isAdmin) {
             return res.status(403).json({ message: 'Kun administratorer kan se unclaimed produkter' });
         }
 
         const stands = await Stand.find({ status: 'unclaimed' })
             .sort({ createdAt: -1 });
+
+        console.log('Hentede unclaimed stands:', {
+            count: stands.length,
+            stands: stands.map(s => ({
+                id: s._id,
+                standerId: s.standerId,
+                status: s.status,
+                createdAt: s.createdAt
+            }))
+        });
+
         res.json(stands);
     } catch (error) {
         console.error('Fejl ved hentning af unclaimed stands:', error);
@@ -1339,7 +1402,7 @@ app.post('/api/stands/reorder', authenticateToken, async (req, res) => {
     }
 });
 
-// Redirect endpoint for stands
+// Redirect endpoint for stands (skal være før alle andre routes)
 app.get('/:standerId', async (req, res) => {
   try {
     const stand = await Stand.findOne({ standerId: req.params.standerId });
@@ -1353,10 +1416,26 @@ app.get('/:standerId', async (req, res) => {
       ? 'https://my.tapfeed.dk'
       : 'http://localhost:3001';
 
+    // Hvis produktet er unclaimed, redirect direkte til claim siden
     if (stand.status === 'unclaimed') {
-      // Hvis produktet ikke er claimed, redirect til claim siden
+      console.log('Redirecting unclaimed product to:', `${frontendUrl}/claim/${stand.standerId}`);
       return res.redirect(`${frontendUrl}/claim/${stand.standerId}`);
     }
+
+    // Registrer klik og tidspunkt
+    stand.clicks = (stand.clicks || 0) + 1;
+    
+    // Gem tidspunkt i UTC uden at justere for tidszone
+    const now = new Date();
+    stand.clickHistory.push({ timestamp: now });
+    
+    await stand.save();
+
+    console.log('Klik registreret:', {
+      standerId: stand.standerId,
+      clicks: stand.clicks,
+      clickTime: now.toISOString()
+    });
 
     // Hvis produktet er claimed men ikke har nogen redirect URL eller landing page
     if (stand.status === 'claimed' && !stand.redirectUrl && !stand.landingPageId) {
@@ -1427,9 +1506,18 @@ app.post('/api/stands/:standId/click', async (req, res) => {
             return res.status(404).json({ message: 'Produkt ikke fundet' });
         }
 
-        // Opdater antal kliks
+        // Opdater antal kliks og clickHistory
         stand.clicks = (stand.clicks || 0) + 1;
+        const now = new Date();
+        stand.clickHistory.push({ timestamp: now });
+        
         await stand.save();
+
+        console.log('Klik registreret:', {
+            standId: stand._id,
+            clicks: stand.clicks,
+            clickTime: now.toISOString()
+        });
 
         res.json({ message: 'Klik registreret', clicks: stand.clicks });
     } catch (error) {
@@ -2323,5 +2411,3 @@ const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server kører på port ${PORT}`);
 });
-
-module.exports = app;
