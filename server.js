@@ -843,7 +843,7 @@ app.post('/api/stands/bulk', requireAuth, async (req, res) => {
 // Opdater stand
 app.put('/api/stands/:id', authenticateToken, async (req, res) => {
   try {
-    const { nickname, landingPageId } = req.body;
+    const { nickname, landingPageId, redirectUrl } = req.body;
     
     // Tjek om landing page eksisterer og tilhører brugeren
     if (landingPageId) {
@@ -858,10 +858,17 @@ app.put('/api/stands/:id', authenticateToken, async (req, res) => {
     }
 
     const stand = await Stand.findOneAndUpdate(
-      { _id: req.params.id, userId: req.session.userId },
+      { 
+        _id: req.params.id,
+        $or: [
+          { userId: req.session.userId },
+          { ownerId: req.session.userId }
+        ]
+      },
       { 
         nickname,
-        landingPageId: landingPageId || null
+        landingPageId: landingPageId || null,
+        redirectUrl: redirectUrl || null
       },
       { new: true }
     );
