@@ -119,36 +119,16 @@ app.use(async (req, res, next) => {
 });
 
 // Tilføj denne nye route før landing page route
-app.get('/:standerId', async (req, res, next) => {
+app.get('/landing/:id', async (req, res) => {
   try {
-    // Tjek om det ligner et stander ID (f.eks. TF1234)
-    if (req.params.standerId.match(/^TF\d+$/)) {
-      const stand = await Stand.findOne({ standerId: req.params.standerId });
-      if (stand) {
-        const frontendUrl = process.env.NODE_ENV === 'production'
-          ? 'https://my.tapfeed.dk'
-          : 'http://localhost:3001';
-
-        // Bestem redirect URL baseret på status
-        let redirectPath;
-        if (stand.status === 'unclaimed') {
-          redirectPath = `/unclaimed/${stand.standerId}`;
-        } else if (!stand.redirectUrl && !stand.landingPageId) {
-          redirectPath = `/not-configured/${stand.standerId}`;
-        } else if (stand.landingPageId) {
-          redirectPath = `/landing/${stand.landingPageId}`;
-        } else {
-          return res.redirect(stand.redirectUrl);
-        }
-
-        return res.redirect(`${frontendUrl}${redirectPath}`);
-      }
+    const landingPage = await LandingPage.findById(req.params.id);
+    if (landingPage) {
+      return res.json(landingPage);
     }
-    // Hvis det ikke er et stander ID eller standeren ikke findes, fortsæt til næste route
-    next();
+    res.status(404).json({ message: 'Landing page ikke fundet' });
   } catch (error) {
-    console.error('Fejl ved håndtering af stander ID:', error);
-    next(error);
+    console.error('Fejl ved hentning af landing page:', error);
+    res.status(500).json({ message: 'Serverfejl' });
   }
 });
 
@@ -1466,7 +1446,7 @@ app.post('/api/stands/reorder', authenticateToken, async (req, res) => {
 });
 
 // Redirect endpoint for stands (skal være før alle andre routes)
-app.get('/:standerId', async (req, res) => {
+app.get('/:standerId', async (req, res, next) => {
   try {
     console.log('Modtaget redirect anmodning for:', req.params.standerId);
     const stand = await Stand.findOne({ standerId: req.params.standerId });
@@ -1504,8 +1484,8 @@ app.get('/:standerId', async (req, res) => {
 
     // Hvis produktet er unclaimed, vis unclaimed siden
     if (stand.status === 'unclaimed') {
-      console.log('Redirecting unclaimed product to:', `${frontendUrl}/not-configured/${stand.standerId}`);
-      return res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
+      console.log('Redirecting unclaimed product to:', `${frontendUrl}/unclaimed/${stand.standerId}`);
+      return res.redirect(`${frontendUrl}/unclaimed/${stand.standerId}`);
     }
 
     // Hvis produktet har en landing page, redirect til den
@@ -2589,19 +2569,29 @@ app.get('/api/landing/:id', landingPagesLimiter, async (req, res) => {
 });
 
 // Landing page preview endpoint - tillader alle origins og ingen rate limiting
-app.get('/api/landing-pages/preview/:id', async (req, res) => {
+app.get('/api/landing/:id', async (req, res) => {
   try {
     const page = await LandingPage.findById(req.params.id);
     if (!page) {
       return res.status(404).json({ message: 'Landing page ikke fundet' });
     }
+
     // Tillad CORS for dette endpoint
-    res.header('Access-Control-Allow-Origin', '*');
+    const allowedOrigins = process.env.NODE_ENV === 'production' 
+      ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk']
+      : ['http://localhost:3001', 'http://localhost:3000'];
+
+    const origin = req.headers.origin;
+    if (allowedOrigins.includes(origin)) {
+      res.header('Access-Control-Allow-Origin', origin);
+    }
     res.header('Access-Control-Allow-Methods', 'GET');
     res.header('Access-Control-Allow-Headers', 'Content-Type');
+    res.header('Access-Control-Allow-Credentials', 'true');
+
     res.json(page);
   } catch (error) {
-    console.error('Fejl ved hentning af landing page preview:', error);
+    console.error('Fejl ved hentning af landing page:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing page' });
   }
 });
@@ -2841,12 +2831,6 @@ app.get('*', (req, res) => {
   res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
 });
 
-// Start serveren
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-    console.log(`Server kører på port ${PORT}`);
-});
-
 // Landing page viewport height endpoint
 app.get('/api/viewport-height', (req, res) => {
   // Send en simpel HTML-side der returnerer viewport højden
@@ -2873,6 +2857,13 @@ app.get('/api/viewport-height', (req, res) => {
   `);
 });
 
+// Registrer routes
 app.use('/api/landing-pages', landingPagesRouter);
 app.use('/api/user', userRouter);
 app.use('/api/dashboard', userRouter);
+
+// Start serveren
+const PORT = process.env.PORT || 3000;
+app.listen(PORT, () => {
+    console.log(`Server kører på port ${PORT}`);
+});
