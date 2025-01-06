@@ -1,12 +1,12 @@
 const express = require('express');
 const router = express.Router();
-const { authenticateToken } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
 const upload = require('../config/multer');
 const cloudinary = require('../config/cloudinary');
 const LandingPage = require('../models/LandingPage');
 
 // Landing Pages endpoints
-router.post('/', authenticateToken, upload.fields([
+router.post('/', requireAuth, upload.fields([
   { name: 'logo', maxCount: 1 },
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
@@ -94,7 +94,7 @@ router.post('/', authenticateToken, upload.fields([
   }
 });
 
-router.get('/', authenticateToken, async (req, res) => {
+router.get('/', requireAuth, async (req, res) => {
   try {
     const pages = await LandingPage.find({ userId: req.session.userId });
     res.json(pages);
@@ -119,7 +119,7 @@ router.get('/preview/:id', async (req, res) => {
   }
 });
 
-router.put('/:id', authenticateToken, upload.fields([
+router.put('/:id', requireAuth, upload.fields([
   { name: 'logo', maxCount: 1 },
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
@@ -210,7 +210,7 @@ router.put('/:id', authenticateToken, upload.fields([
   }
 });
 
-router.delete('/:id', authenticateToken, async (req, res) => {
+router.delete('/:id', requireAuth, async (req, res) => {
   try {
     const page = await LandingPage.findOneAndDelete({
       _id: req.params.id,

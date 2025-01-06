@@ -36,6 +36,8 @@ const userRouter = require('./routes/user');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
+const adminRouter = require('./routes/admin');
+const { requireAuth, isAdmin } = require('./middleware/auth');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -154,7 +156,7 @@ app.get('/:urlPath', async (req, res, next) => {
 // CORS konfiguration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk']
+    ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk', 'https://tapfeed.dk']
     : ['http://localhost:3001', 'http://localhost:3000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -182,7 +184,7 @@ app.use(session({
     }
 }));
 
-// Initialize Passport and restore authentication state from session
+// Initialize Passport
 app.use(passport.initialize());
 app.use(passport.session());
 
@@ -197,19 +199,10 @@ app.use((req, res, next) => {
     next();
 });
 
-// Passport configuration
-passport.serializeUser((user, done) => {
-    done(null, user.id);
-});
-
-passport.deserializeUser(async (id, done) => {
-    try {
-        const user = await User.findById(id);
-        done(null, user);
-    } catch (error) {
-        done(error, null);
-    }
-});
+// Registrer routes
+app.use('/api/admin', adminRouter);
+app.use('/api/landing-pages', landingPagesRouter);
+app.use('/api/user', userRouter);
 
 // Basic routes
 app.get('/', (req, res) => {
@@ -273,19 +266,6 @@ app.post('/api/auth/login', async (req, res) => {
 });
 
 // Authentication middleware
-const requireAuth = (req, res, next) => {
-    console.log('Session check:', {
-        sessionExists: !!req.session,
-        userId: req.session?.userId,
-        sessionId: req.session?.id
-    });
-
-    if (!req.session || !req.session.userId) {
-        return res.status(401).json({ message: 'Ikke autoriseret' });
-    }
-    next();
-};
-
 const authenticateToken = async (req, res, next) => {
     try {
         if (!req.session.userId) {
@@ -1140,19 +1120,6 @@ app.post('/api/user/change-password', authenticateToken, async (req, res) => {
         res.status(500).json({ message: 'Der opstod en serverfejl' });
     }
 });
-
-// Admin middleware
-const isAdmin = async (req, res, next) => {
-    try {
-        const user = await User.findById(req.session.userId);
-        if (!user || !user.isAdmin) {
-            return res.status(403).json({ message: 'Ingen adgang' });
-        }
-        next();
-    } catch (error) {
-        res.status(500).json({ message: 'Der opstod en serverfejl' });
-    }
-};
 
 // Admin endpoints
 app.get('/api/admin/users', authenticateToken, async (req, res) => {
@@ -2860,10 +2827,233 @@ app.get('/api/viewport-height', (req, res) => {
 // Registrer routes
 app.use('/api/landing-pages', landingPagesRouter);
 app.use('/api/user', userRouter);
-app.use('/api/dashboard', userRouter);
+app.use('/api/admin', adminRouter);
+
+// Speciel CORS middleware for landing pages
+const landingPageCors = cors({
+  origin: '*', // Tillad alle origins for landing pages
+  methods: ['GET'],
+  allowedHeaders: ['Content-Type']
+});
+
+// Landing page endpoints med speciel CORS
+app.get('/api/landing/:id', landingPageCors, async (req, res) => {
+  try {
+    const page = await LandingPage.findById(req.params.id);
+    if (!page) {
+      return res.status(404).json({ message: 'Landing page ikke fundet' });
+    }
+
+    res.json(page);
+  } catch (error) {
+    console.error('Fejl ved hentning af landing page:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af landing page' });
+  }
+});
 
 // Start serveren
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server kører på port ${PORT}`);
+});
+
+// Admin endpoints
+app.get('/api/admin/users/:id/statistics', authenticateToken, async (req, res) => {
+  try {
+    // Tjek om brugeren er admin
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: 'Ingen adgang' });
+    }
+
+    const userId = req.params.id;
+    const user = await User.findById(userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+
+    // Hent alle brugerens stands
+    const stands = await Stand.find({ userId: userId });
+    
+    // Beregn total antal klik
+    const totalClicks = stands.reduce((sum, stand) => sum + (stand.clicks || 0), 0);
+    
+    // Beregn klik over tid (sidste 30 dage)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const clicksOverTime = {};
+    stands.forEach(stand => {
+      stand.clickHistory.forEach(click => {
+        if (click.timestamp >= thirtyDaysAgo) {
+          const date = click.timestamp.toISOString().split('T')[0];
+          clicksOverTime[date] = (clicksOverTime[date] || 0) + 1;
+        }
+      });
+    });
+
+    // Hent landing pages
+    const landingPages = await LandingPage.find({ userId: userId });
+
+    // Hent kategorier
+    const categories = await Category.find({ userId: userId });
+
+    // Beregn statistik for stands
+    const standsStats = {
+      total: stands.length,
+      claimed: stands.filter(s => s.status === 'claimed').length,
+      unclaimed: stands.filter(s => s.status === 'unclaimed').length,
+      withLandingPage: stands.filter(s => s.landingPageId).length,
+      withRedirectUrl: stands.filter(s => s.redirectUrl).length,
+      byProductType: stands.reduce((acc, stand) => {
+        acc[stand.productType] = (acc[stand.productType] || 0) + 1;
+        return acc;
+      }, {})
+    };
+
+    // Beregn aktivitetsstatistik
+    const activityStats = {
+      lastLogin: user.lastLogin,
+      accountCreated: user.createdAt,
+      lastStandClaimed: stands.reduce((latest, stand) => {
+        if (stand.claimedAt && (!latest || stand.claimedAt > latest)) {
+          return stand.claimedAt;
+        }
+        return latest;
+      }, null),
+      lastLandingPageCreated: landingPages.length > 0 ? 
+        landingPages.reduce((latest, page) => 
+          !latest || page.createdAt > latest ? page.createdAt : latest
+        , null) : null
+    };
+
+    // Samlet statistik
+    const statistics = {
+      user: {
+        username: user.username,
+        email: user.email,
+        createdAt: user.createdAt,
+        isAdmin: user.isAdmin,
+        hasGoogleBusiness: !!user.googlePlaceId
+      },
+      stands: standsStats,
+      engagement: {
+        totalClicks,
+        clicksOverTime,
+        averageClicksPerStand: stands.length ? (totalClicks / stands.length).toFixed(2) : 0,
+        mostClickedStand: stands.reduce((most, stand) => 
+          !most || stand.clicks > most.clicks ? stand : most
+        , null)
+      },
+      content: {
+        landingPages: landingPages.length,
+        categories: categories.length
+      },
+      activity: activityStats
+    };
+
+    res.json(statistics);
+  } catch (error) {
+    console.error('Fejl ved hentning af brugerstatistik:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af statistik' });
+  }
+});
+
+// Admin system statistics endpoint
+app.get('/api/admin/statistics', authenticateToken, async (req, res) => {
+  try {
+    // Tjek om brugeren er admin
+    if (!req.user.isAdmin) {
+      return res.status(403).json({ message: 'Ingen adgang' });
+    }
+
+    // Hent total antal brugere
+    const totalUsers = await User.countDocuments();
+    const activeUsers = await User.countDocuments({ 
+      lastLogin: { 
+        $gte: new Date(Date.now() - 30 * 24 * 60 * 60 * 1000) 
+      } 
+    });
+
+    // Hent total antal stands og deres status
+    const stands = await Stand.find();
+    const standsStats = {
+      total: stands.length,
+      claimed: stands.filter(s => s.status === 'claimed').length,
+      unclaimed: stands.filter(s => s.status === 'unclaimed').length,
+      totalClicks: stands.reduce((sum, stand) => sum + (stand.clicks || 0), 0)
+    };
+
+    // Beregn klik over tid (sidste 30 dage)
+    const thirtyDaysAgo = new Date();
+    thirtyDaysAgo.setDate(thirtyDaysAgo.getDate() - 30);
+    
+    const clicksOverTime = {};
+    stands.forEach(stand => {
+      stand.clickHistory.forEach(click => {
+        if (click.timestamp >= thirtyDaysAgo) {
+          const date = click.timestamp.toISOString().split('T')[0];
+          clicksOverTime[date] = (clicksOverTime[date] || 0) + 1;
+        }
+      });
+    });
+
+    // Hent landing pages statistik
+    const totalLandingPages = await LandingPage.countDocuments();
+    
+    // Beregn brugeraktivitet over tid
+    const userSignups = await User.aggregate([
+      {
+        $match: {
+          createdAt: { $gte: thirtyDaysAgo }
+        }
+      },
+      {
+        $group: {
+          _id: {
+            $dateToString: { format: "%Y-%m-%d", date: "$createdAt" }
+          },
+          count: { $sum: 1 }
+        }
+      },
+      { $sort: { _id: 1 } }
+    ]);
+
+    // Beregn produkttype fordeling
+    const productTypeDistribution = stands.reduce((acc, stand) => {
+      acc[stand.productType] = (acc[stand.productType] || 0) + 1;
+      return acc;
+    }, {});
+
+    // Samlet statistik
+    const statistics = {
+      users: {
+        total: totalUsers,
+        active: activeUsers,
+        signupsOverTime: userSignups.reduce((acc, item) => {
+          acc[item._id] = item.count;
+          return acc;
+        }, {})
+      },
+      stands: {
+        ...standsStats,
+        productTypeDistribution,
+        averageClicksPerStand: stands.length ? 
+          (standsStats.totalClicks / stands.length).toFixed(2) : 0
+      },
+      engagement: {
+        clicksOverTime,
+        totalClicks: standsStats.totalClicks
+      },
+      content: {
+        totalLandingPages,
+        averageLandingPagesPerUser: totalUsers ? 
+          (totalLandingPages / totalUsers).toFixed(2) : 0
+      }
+    };
+
+    res.json(statistics);
+  } catch (error) {
+    console.error('Fejl ved hentning af systemstatistik:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved hentning af statistik' });
+  }
 });

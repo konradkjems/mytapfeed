@@ -2,10 +2,10 @@ const express = require('express');
 const router = express.Router();
 const User = require('../models/User');
 const Stand = require('../models/Stand');
-const { authenticateToken } = require('../middleware/auth');
+const { requireAuth } = require('../middleware/auth');
 
 // Get user profile
-router.get('/profile', authenticateToken, async (req, res) => {
+router.get('/profile', requireAuth, async (req, res) => {
   try {
     console.log('Henter brugerprofil for ID:', req.session.userId);
     const user = await User.findById(req.session.userId)
@@ -28,7 +28,7 @@ router.get('/profile', authenticateToken, async (req, res) => {
 });
 
 // Get dashboard data
-router.get('/dashboard', authenticateToken, async (req, res) => {
+router.get('/dashboard', requireAuth, async (req, res) => {
   try {
     console.log('Henter dashboard data for bruger:', req.session.userId);
     
