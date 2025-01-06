@@ -58,6 +58,10 @@
             }
         },
         {
+            "src": "/not-configured/(.*)",
+            "dest": "/index.html"
+        },
+        {
             "src": "/(.*)",
             "dest": "/server.js"
         }

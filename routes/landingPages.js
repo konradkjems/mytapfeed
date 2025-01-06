@@ -24,7 +24,10 @@ router.post('/', authenticateToken, upload.fields([
       descriptionColor,
       buttons,
       showTitle,
-      socialLinks 
+      socialLinks,
+      titleFont,
+      descriptionFont,
+      buttonFont
     } = req.body;
     
     // Upload billeder til Cloudinary hvis de findes
@@ -59,6 +62,8 @@ router.post('/', authenticateToken, upload.fields([
       backgroundImageUrl = backgroundResult.secure_url;
     }
 
+    console.log('Received showTitle value:', showTitle);
+
     const page = new LandingPage({
       userId: req.session.userId,
       title,
@@ -72,10 +77,14 @@ router.post('/', authenticateToken, upload.fields([
       descriptionColor,
       buttons: JSON.parse(buttons || '[]'),
       showTitle: showTitle === 'true',
-      socialLinks: JSON.parse(socialLinks || '{}')
+      socialLinks: JSON.parse(socialLinks || '{}'),
+      titleFont,
+      descriptionFont,
+      buttonFont
     });
 
-    console.log('Gemmer landing page:', page);
+    console.log('Raw showTitle value:', showTitle, typeof showTitle);
+    console.log('Creating page with showTitle:', page.showTitle);
 
     await page.save();
     res.status(201).json(page);
@@ -128,7 +137,10 @@ router.put('/:id', authenticateToken, upload.fields([
       descriptionColor,
       buttons, 
       showTitle, 
-      socialLinks 
+      socialLinks,
+      titleFont,
+      descriptionFont,
+      buttonFont
     } = req.body;
     
     const updates = {
@@ -141,8 +153,14 @@ router.put('/:id', authenticateToken, upload.fields([
       descriptionColor,
       buttons: JSON.parse(buttons || '[]'),
       showTitle: showTitle === 'true',
-      socialLinks: JSON.parse(socialLinks || '{}')
+      socialLinks: JSON.parse(socialLinks || '{}'),
+      titleFont,
+      descriptionFont,
+      buttonFont
     };
+
+    console.log('Raw showTitle value:', showTitle, typeof showTitle);
+    console.log('Parsed showTitle value:', updates.showTitle);
 
     if (req.files?.logo) {
       const logoResult = await new Promise((resolve, reject) => {

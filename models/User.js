@@ -25,6 +25,10 @@ const userSchema = new mongoose.Schema({
         required: [true, 'Adgangskode er påkrævet'],
         minlength: [6, 'Adgangskode skal være mindst 6 tegn']
     },
+    products: [{
+        type: mongoose.Schema.Types.ObjectId,
+        ref: 'Stand'
+    }],
     isAdmin: {
         type: Boolean,
         default: false

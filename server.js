@@ -27,25 +27,27 @@ const unlinkFile = util.promisify(fs.unlink);
 const axios = require('axios');
 const NodeCache = require('node-cache');
 const rateLimit = require('express-rate-limit');
-const google = require('googleapis');
+const { google } = require('googleapis');
 const path = require('path');
 const { Client } = require('@googlemaps/google-maps-services-js');
 const LandingPage = require('./models/LandingPage');
 const landingPagesRouter = require('./routes/landingPages');
+const userRouter = require('./routes/user');
 const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
-    stdTTL: 600,  // Øg til 10 minutter
-    checkperiod: 120  // Tjek for udløbne keys hvert 2. minut
+    stdTTL: 1800,  // Øg til 30 minutter (fra 10 minutter)
+    checkperiod: 300,  // Tjek for udløbne keys hvert 5. minut
+    deleteOnExpire: false  // Behold udløbne værdier indtil nye er hentet
 });
 
 // Rate limiter konfiguration
 const googleBusinessLimiter = rateLimit({
     windowMs: 60 * 1000, // 1 minut
-    max: 2, // Reducer til max 2 requests per minut per IP
+    max: 2, // Reducer til max 2 requests per minut
     message: { 
         message: 'For mange forsøg. Vent venligst et minut før du prøver igen.',
         needsAuth: false,
@@ -116,6 +118,40 @@ app.use(async (req, res, next) => {
   next();
 });
 
+// Tilføj denne nye route før landing page route
+app.get('/:standerId', async (req, res, next) => {
+  try {
+    // Tjek om det ligner et stander ID (f.eks. TF1234)
+    if (req.params.standerId.match(/^TF\d+$/)) {
+      const stand = await Stand.findOne({ standerId: req.params.standerId });
+      if (stand) {
+        const frontendUrl = process.env.NODE_ENV === 'production'
+          ? 'https://my.tapfeed.dk'
+          : 'http://localhost:3001';
+
+        // Bestem redirect URL baseret på status
+        let redirectPath;
+        if (stand.status === 'unclaimed') {
+          redirectPath = `/unclaimed/${stand.standerId}`;
+        } else if (!stand.redirectUrl && !stand.landingPageId) {
+          redirectPath = `/not-configured/${stand.standerId}`;
+        } else if (stand.landingPageId) {
+          redirectPath = `/landing/${stand.landingPageId}`;
+        } else {
+          return res.redirect(stand.redirectUrl);
+        }
+
+        return res.redirect(`${frontendUrl}${redirectPath}`);
+      }
+    }
+    // Hvis det ikke er et stander ID eller standeren ikke findes, fortsæt til næste route
+    next();
+  } catch (error) {
+    console.error('Fejl ved håndtering af stander ID:', error);
+    next(error);
+  }
+});
+
 // Tilføj denne nye route i stedet
 app.get('/:urlPath', async (req, res, next) => {
   try {
@@ -135,39 +171,34 @@ app.get('/:urlPath', async (req, res, next) => {
   }
 });
 
-// Cors setup
-app.use(cors({
-    origin: process.env.NODE_ENV === 'production' 
-        ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk', 'https://tapfeed.dk', /\.tapfeed\.dk$/]
-        : ['http://localhost:3000', 'http://localhost:3001'],
-    credentials: true,
-    methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-    allowedHeaders: ['Content-Type', 'Authorization', 'Accept', 'Cookie', 'Origin', 'Cache-Control'],
-    exposedHeaders: ['Set-Cookie'],
-    preflightContinue: false,
-    optionsSuccessStatus: 204
-}));
+// CORS konfiguration
+const corsOptions = {
+  origin: process.env.NODE_ENV === 'production' 
+    ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk']
+    : ['http://localhost:3001', 'http://localhost:3000'],
+  credentials: true,
+  methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
+  allowedHeaders: ['Content-Type', 'Authorization']
+};
 
+app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Session middleware
+// Session konfiguration
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'your-secret-key', 
+    secret: process.env.SESSION_SECRET || 'mytapfeed-dev-secret-key',
     resave: false,
     saveUninitialized: false,
-    store: MongoStore.create({
+    store: MongoStore.create({ 
         mongoUrl: process.env.MONGODB_URI,
-        ttl: 24 * 60 * 60,
-        autoRemove: 'native',
-        touchAfter: 24 * 3600
+        ttl: 24 * 60 * 60 // 1 dag
     }),
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
-        maxAge: 24 * 60 * 60 * 1000,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : undefined
+        maxAge: 24 * 60 * 60 * 1000 // 1 dag
     }
 }));
 
@@ -550,65 +581,97 @@ app.get('/api/auth/google/callback',
     }
 );
 
-// Google Business auth routes
-const googleBusinessScopes = [
-    'https://www.googleapis.com/auth/business.manage',
-    'https://www.googleapis.com/auth/userinfo.email',
-    'https://www.googleapis.com/auth/userinfo.profile'
-];
-
+// Google Business auth endpoints
 app.get('/api/auth/google-business', (req, res) => {
-    const oauth2Client = new google.auth.OAuth2(
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_SECRET,
-        process.env.NODE_ENV === 'production'
-            ? 'https://api.tapfeed.dk/api/auth/google-business/callback'
-            : 'http://localhost:3000/api/auth/google-business/callback'
-    );
+  const oauth2Client = new google.auth.OAuth2(
+    process.env.GOOGLE_CLIENT_ID,
+    process.env.GOOGLE_CLIENT_SECRET,
+    process.env.NODE_ENV === 'production'
+      ? "https://api.tapfeed.dk/api/auth/google-business/callback"
+      : "http://localhost:3000/api/auth/google-business/callback"
+  );
 
-    const authUrl = oauth2Client.generateAuthUrl({
-        access_type: 'offline',
-        scope: googleBusinessScopes,
-        prompt: 'consent'
-    });
+  const scopes = [
+    'https://www.googleapis.com/auth/business.manage',
+    'https://www.googleapis.com/auth/userinfo.profile',
+    'https://www.googleapis.com/auth/userinfo.email'
+  ];
 
-    console.log('Redirecting til Google OAuth URL:', authUrl);
-    res.redirect(authUrl);
+  const authUrl = oauth2Client.generateAuthUrl({
+    access_type: 'offline',
+    scope: scopes,
+    prompt: 'consent'
+  });
+
+  res.redirect(authUrl);
 });
 
 app.get('/api/auth/google-business/callback', async (req, res) => {
+  try {
+    const { code } = req.query;
     const oauth2Client = new google.auth.OAuth2(
-        process.env.GOOGLE_CLIENT_ID,
-        process.env.GOOGLE_CLIENT_SECRET,
-        'http://localhost:3000/api/auth/google-business/callback'
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.NODE_ENV === 'production'
+        ? "https://api.tapfeed.dk/api/auth/google-business/callback"
+        : "http://localhost:3000/api/auth/google-business/callback"
     );
 
-    try {
-        console.log('Modtaget OAuth callback med kode');
-        const { tokens } = await oauth2Client.getToken(req.query.code);
-        console.log('OAuth tokens modtaget:', {
-            hasAccessToken: !!tokens.access_token,
-            hasRefreshToken: !!tokens.refresh_token,
-            expiryDate: tokens.expiry_date
-        });
+    const { tokens } = await oauth2Client.getToken(code);
+    oauth2Client.setCredentials(tokens);
 
-        const user = await User.findById(req.session.userId);
-        if (!user) {
-            throw new Error('Bruger ikke fundet');
-        }
-
-        user.googleAccessToken = tokens.access_token;
-        if (tokens.refresh_token) {
-            user.googleRefreshToken = tokens.refresh_token;
-        }
-        await user.save();
-
-        console.log('Tokens gemt for bruger:', user._id);
-        res.redirect('/dashboard');
-    } catch (error) {
-        console.error('OAuth callback fejl:', error);
-        res.redirect('/dashboard?error=auth_failed');
+    // Gem tokens i brugerens session
+    const user = await User.findById(req.session.userId);
+    if (!user) {
+      const frontendUrl = process.env.NODE_ENV === 'production'
+        ? 'https://my.tapfeed.dk'
+        : 'http://localhost:3001';
+      return res.redirect(`${frontendUrl}/settings?error=user-not-found`);
     }
+
+    user.googleAccessToken = tokens.access_token;
+    user.googleRefreshToken = tokens.refresh_token;
+    await user.save();
+
+    // Redirect tilbage til settings siden
+    const frontendUrl = process.env.NODE_ENV === 'production'
+      ? 'https://my.tapfeed.dk'
+      : 'http://localhost:3001';
+    res.redirect(`${frontendUrl}/settings?success=true`);
+  } catch (error) {
+    console.error('Fejl ved Google Business callback:', error);
+    const frontendUrl = process.env.NODE_ENV === 'production'
+      ? 'https://my.tapfeed.dk'
+      : 'http://localhost:3001';
+    res.redirect(`${frontendUrl}/settings?error=auth-failed`);
+  }
+});
+
+// Google Business logout endpoint
+app.post('/api/auth/google-business/logout', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+
+    // Nulstil Google tokens
+    user.googlePlaceId = null;
+    user.googleAccessToken = null;
+    user.googleRefreshToken = null;
+    await user.save();
+
+    // Ryd cache for brugerens anmeldelser
+    if (user.googlePlaceId) {
+      const cacheKey = `reviews_${user.googlePlaceId}`;
+      businessCache.del(cacheKey);
+    }
+
+    res.json({ message: 'Logget ud af Google Business Profile' });
+  } catch (error) {
+    console.error('Fejl ved logout af Google Business:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved logout' });
+  }
 });
 
 // Auth endpoints
@@ -1405,9 +1468,11 @@ app.post('/api/stands/reorder', authenticateToken, async (req, res) => {
 // Redirect endpoint for stands (skal være før alle andre routes)
 app.get('/:standerId', async (req, res) => {
   try {
+    console.log('Modtaget redirect anmodning for:', req.params.standerId);
     const stand = await Stand.findOne({ standerId: req.params.standerId });
     
     if (!stand) {
+      console.log('Produkt ikke fundet:', req.params.standerId);
       return res.status(404).json({ message: 'Produkt ikke fundet' });
     }
 
@@ -1415,12 +1480,6 @@ app.get('/:standerId', async (req, res) => {
     const frontendUrl = process.env.NODE_ENV === 'production'
       ? 'https://my.tapfeed.dk'
       : 'http://localhost:3001';
-
-    // Hvis produktet er unclaimed, redirect direkte til claim siden
-    if (stand.status === 'unclaimed') {
-      console.log('Redirecting unclaimed product to:', `${frontendUrl}/claim/${stand.standerId}`);
-      return res.redirect(`${frontendUrl}/claim/${stand.standerId}`);
-    }
 
     // Registrer klik og tidspunkt
     stand.clicks = (stand.clicks || 0) + 1;
@@ -1439,11 +1498,19 @@ app.get('/:standerId', async (req, res) => {
 
     // Hvis produktet er claimed men ikke har nogen redirect URL eller landing page
     if (stand.status === 'claimed' && !stand.redirectUrl && !stand.landingPageId) {
+      console.log('Redirecting not configured product to:', `${frontendUrl}/not-configured/${stand.standerId}`);
+      return res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
+    }
+
+    // Hvis produktet er unclaimed, vis unclaimed siden
+    if (stand.status === 'unclaimed') {
+      console.log('Redirecting unclaimed product to:', `${frontendUrl}/not-configured/${stand.standerId}`);
       return res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
     }
 
     // Hvis produktet har en landing page, redirect til den
     if (stand.landingPageId) {
+      console.log('Redirecting to landing page:', `${frontendUrl}/landing/${stand.landingPageId}`);
       return res.redirect(`${frontendUrl}/landing/${stand.landingPageId}`);
     }
 
@@ -1453,10 +1520,12 @@ app.get('/:standerId', async (req, res) => {
       const redirectUrl = stand.redirectUrl.startsWith('http') 
         ? stand.redirectUrl 
         : `https://${stand.redirectUrl}`;
+      console.log('Redirecting to external URL:', redirectUrl);
       return res.redirect(redirectUrl);
     }
 
     // Hvis ingen redirect URL eller landing page er sat, redirect til not-configured siden
+    console.log('No redirect configuration found, redirecting to not-configured page');
     res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
   } catch (error) {
     console.error('Fejl ved redirect:', error);
@@ -1550,21 +1619,55 @@ app.get('/api/business/google-reviews', authenticateToken, googleReviewsLimiter,
       });
     }
 
-    // Tjek cache først
     const cacheKey = `reviews_${user.googlePlaceId}`;
-    const cachedData = businessCache.get(cacheKey);
+    
+    // Prøv at hente fra cache først
+    let cachedData = businessCache.get(cacheKey);
+    
+    // Hvis vi har cached data, send det med det samme
     if (cachedData) {
       console.log('Returnerer cached reviews data');
+      
+      // Start asynkron opdatering hvis dataene er ældre end 15 minutter
+      const cacheStats = businessCache.getTtl(cacheKey);
+      const fifteenMinutesAgo = Date.now() - (15 * 60 * 1000);
+      
+      if (cacheStats && cacheStats < fifteenMinutesAgo) {
+        console.log('Cache er ældre end 15 minutter, starter baggrundsopdatering');
+        updateCacheInBackground(user, cacheKey).catch(console.error);
+      }
+      
       return res.json(cachedData);
     }
 
-    // Hent place details fra Google Places API
+    // Hvis ingen cache, hent nye data
     const placeDetailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${user.googlePlaceId}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
-    const placeDetailsResponse = await axios.get(placeDetailsUrl);
+    
+    const placeDetailsResponse = await axios.get(placeDetailsUrl, {
+      timeout: 5000, // 5 sekunder timeout
+      retry: 3, // Antal retry forsøg
+      retryDelay: (retryCount) => {
+        return retryCount * 1000; // Stigende ventetid mellem forsøg
+      }
+    });
 
     if (placeDetailsResponse.data.status === 'REQUEST_DENIED') {
       console.error('Google Places API afviste anmodningen:', placeDetailsResponse.data.error_message);
-      return res.status(500).json({ message: 'Kunne ikke hente virksomhedsdata' });
+      
+      // Hvis vi har udløbet cache data, brug det som fallback
+      const expiredData = businessCache.get(cacheKey, true); // true = få også udløbede værdier
+      if (expiredData) {
+        console.log('Bruger udløbet cache som fallback');
+        return res.json({
+          ...expiredData,
+          _cached: true,
+          _expired: true
+        });
+      }
+      
+      return res.status(503).json({ 
+        message: 'Kunne ikke hente virksomhedsdata lige nu, prøv igen senere'
+      });
     }
 
     if (!placeDetailsResponse.data.result) {
@@ -1585,11 +1688,14 @@ app.get('/api/business/google-reviews', authenticateToken, googleReviewsLimiter,
         formatted_phone_number: placeDetails.formatted_phone_number,
         website: placeDetails.website
       },
-      reviews: placeDetails.reviews || []
+      reviews: (placeDetails.reviews || []).map(review => ({
+        ...review,
+        reviewId: review.time.toString()
+      }))
     };
 
-    // Gem i cache i 5 minutter
-    businessCache.set(cacheKey, responseData, 300);
+    // Gem i cache med længere TTL
+    businessCache.set(cacheKey, responseData, 1800); // 30 minutter
     
     res.json(responseData);
   } catch (error) {
@@ -1598,7 +1704,134 @@ app.get('/api/business/google-reviews', authenticateToken, googleReviewsLimiter,
       stack: error.stack,
       response: error.response?.data
     });
-    res.status(500).json({ message: 'Der opstod en fejl ved hentning af anmeldelser' });
+
+    // Prøv at bruge udløbet cache som fallback
+    const expiredData = businessCache.get(cacheKey, true);
+    if (expiredData) {
+      console.log('Bruger udløbet cache som fallback efter fejl');
+      return res.json({
+        ...expiredData,
+        _cached: true,
+        _expired: true
+      });
+    }
+
+    res.status(500).json({ 
+      message: 'Der opstod en fejl ved hentning af anmeldelser. Prøv igen senere.',
+      error: error.message 
+    });
+  }
+});
+
+// Hjælpefunktion til at opdatere cache i baggrunden
+async function updateCacheInBackground(user, cacheKey) {
+  try {
+    const placeDetailsUrl = `https://maps.googleapis.com/maps/api/place/details/json?place_id=${user.googlePlaceId}&key=${process.env.GOOGLE_MAPS_API_KEY}`;
+    const response = await axios.get(placeDetailsUrl);
+    
+    if (response.data.status === 'OK' && response.data.result) {
+      const placeDetails = response.data.result;
+      const updatedData = {
+        business: {
+          name: placeDetails.name,
+          rating: placeDetails.rating,
+          user_ratings_total: placeDetails.user_ratings_total,
+          place_id: user.googlePlaceId,
+          formatted_address: placeDetails.formatted_address,
+          formatted_phone_number: placeDetails.formatted_phone_number,
+          website: placeDetails.website
+        },
+        reviews: (placeDetails.reviews || []).map(review => ({
+          ...review,
+          reviewId: review.time.toString()
+        }))
+      };
+      
+      businessCache.set(cacheKey, updatedData, 1800);
+      console.log('Cache opdateret i baggrunden');
+    }
+  } catch (error) {
+    console.error('Fejl ved baggrundsopdatering af cache:', error);
+  }
+}
+
+// Nyt endpoint til at svare på anmeldelser
+app.post('/api/business/reviews/:reviewId/reply', authenticateToken, async (req, res) => {
+  try {
+    const { reviewId } = req.params;
+    const { reply } = req.body;
+    const user = await User.findById(req.session.userId);
+
+    if (!user || !user.googleAccessToken || !user.googlePlaceId) {
+      return res.status(401).json({ 
+        message: 'Du skal være logget ind med Google Business Profile for at svare på anmeldelser' 
+      });
+    }
+
+    // Opret OAuth2 klient
+    const oauth2Client = new google.auth.OAuth2(
+      process.env.GOOGLE_CLIENT_ID,
+      process.env.GOOGLE_CLIENT_SECRET,
+      process.env.NODE_ENV === 'production'
+        ? "https://api.tapfeed.dk/api/auth/google-business/callback"
+        : "http://localhost:3000/api/auth/google-business/callback"
+    );
+
+    oauth2Client.setCredentials({
+      access_token: user.googleAccessToken,
+      refresh_token: user.googleRefreshToken
+    });
+
+    // Opret My Business API klient
+    const mybusiness = google.mybusinessbusinessinformation({
+      version: 'v1',
+      auth: oauth2Client
+    });
+
+    // Hent accounts
+    const accounts = await mybusiness.accounts.list();
+    
+    if (!accounts.data.accounts || accounts.data.accounts.length === 0) {
+      return res.status(404).json({ message: 'Ingen Google Business konto fundet' });
+    }
+
+    const accountName = accounts.data.accounts[0].name;
+
+    // Send svar på anmeldelse via My Business API
+    const replyResponse = await mybusiness.locations.reviews.reply({
+      name: `${accountName}/locations/${user.googlePlaceId}/reviews/${reviewId}`,
+      requestBody: {
+        comment: reply
+      }
+    });
+
+    // Ryd cache for at tvinge en opdatering af anmeldelser
+    const cacheKey = `reviews_${user.googlePlaceId}`;
+    businessCache.del(cacheKey);
+
+    res.json({ 
+      message: 'Svar på anmeldelse gemt succesfuldt',
+      reply: replyResponse.data 
+    });
+
+  } catch (error) {
+    console.error('Fejl ved svar på anmeldelse:', {
+      error: error.message,
+      response: error.response?.data,
+      stack: error.stack
+    });
+
+    if (error.response?.status === 401) {
+      return res.status(401).json({ 
+        message: 'Din Google Business autorisation er udløbet. Log venligst ind igen.',
+        needsAuth: true 
+      });
+    }
+
+    res.status(500).json({ 
+      message: 'Der opstod en fejl ved svar på anmeldelsen',
+      error: error.message 
+    });
   }
 });
 
@@ -2094,47 +2327,41 @@ app.put('/api/landing-pages/:id', authenticateToken, upload.fields([
   { name: 'backgroundImage', maxCount: 1 }
 ]), async (req, res) => {
   try {
-    const { 
-      title, 
-      description, 
-      urlPath,
-      backgroundColor, 
-      buttonColor, 
-      buttonTextColor,
-      titleColor,
-      descriptionColor,
-      buttons,
-      showTitle,
-      socialLinks 
-    } = req.body;
+    console.log('Modtaget opdateringsdata:', req.body);
+
+    // Fjern urlPath fra updates hvis den er tom
+    const { urlPath, showTitle, ...otherUpdates } = req.body;
     
-    // Tjek om URL-stien allerede er i brug af en anden landing page
-    if (urlPath) {
-      const existingPage = await LandingPage.findOne({ 
-        urlPath, 
-        _id: { $ne: req.params.id } 
-      });
-      if (existingPage) {
-        return res.status(400).json({ 
-          message: 'Denne URL-sti er allerede i brug. Vælg venligst en anden.' 
-        });
+    let updates = {};
+
+    // Håndter alle felter fra request body, undtagen dem vi ikke vil have duplikeret
+    Object.keys(otherUpdates).forEach(key => {
+      if (otherUpdates[key] !== undefined && 
+          key !== 'title' && // Ignorer det ekstra titel felt
+          key !== 'description' && // Ignorer det ekstra beskrivelse felt
+          key !== 'showTitle') { // Ignorer showTitle feltet
+        updates[key] = otherUpdates[key];
+      }
+    });
+
+    // Parse JSON felter hvis de findes
+    if (typeof updates.buttons === 'string') {
+      try {
+        updates.buttons = JSON.parse(updates.buttons);
+      } catch (e) {
+        console.error('Fejl ved parsing af buttons:', e);
       }
     }
 
-    const updates = {
-      title,
-      description,
-      urlPath,
-      backgroundColor,
-      buttonColor,
-      buttonTextColor,
-      titleColor,
-      descriptionColor,
-      buttons: JSON.parse(buttons || '[]'),
-      showTitle: showTitle === 'true',
-      socialLinks: JSON.parse(socialLinks || '{}')
-    };
+    if (typeof updates.socialLinks === 'string') {
+      try {
+        updates.socialLinks = JSON.parse(updates.socialLinks);
+      } catch (e) {
+        console.error('Fejl ved parsing af socialLinks:', e);
+      }
+    }
 
+    // Håndter fil uploads
     if (req.files?.logo) {
       const logoResult = await new Promise((resolve, reject) => {
         const uploadStream = cloudinary.uploader.upload_stream(
@@ -2163,20 +2390,42 @@ app.put('/api/landing-pages/:id', authenticateToken, upload.fields([
       updates.backgroundImage = backgroundResult.secure_url;
     }
 
-    const page = await LandingPage.findOneAndUpdate(
+    // Opret update operation
+    const updateOperation = {
+      $set: updates
+    };
+
+    // Håndter urlPath
+    if (!urlPath || urlPath === '') {
+      updateOperation.$unset = { urlPath: 1 };
+    } else {
+      updateOperation.$set.urlPath = urlPath;
+    }
+
+    console.log('Forsøger at opdatere med:', updateOperation);
+
+    const updatedPage = await LandingPage.findOneAndUpdate(
       { _id: req.params.id, userId: req.session.userId },
-      updates,
-      { new: true }
+      updateOperation,
+      { 
+        new: true,
+        runValidators: true
+      }
     );
 
-    if (!page) {
+    if (!updatedPage) {
       return res.status(404).json({ message: 'Landing page ikke fundet' });
     }
 
-    res.json(page);
+    console.log('Landing page opdateret:', updatedPage);
+    res.json(updatedPage);
+
   } catch (error) {
     console.error('Fejl ved opdatering af landing page:', error);
-    res.status(500).json({ message: 'Der opstod en fejl ved opdatering af landing page' });
+    res.status(500).json({ 
+      message: 'Der opstod en fejl ved opdatering af landing page',
+      error: error.message
+    });
   }
 });
 
@@ -2216,6 +2465,122 @@ app.get('/api/landing/:id', landingPagesLimiter, async (req, res) => {
     if (!page) {
       return res.status(404).json({ message: 'Landing page ikke fundet' });
     }
+
+    // Forbedret viewport og højde håndtering
+    const mobileHeightScript = `
+      <script>
+        function setViewportHeight() {
+          // Få den faktiske viewport højde
+          const vh = window.innerHeight;
+          // Beregn maksimal højde (80% på desktop, 100% på mobile)
+          const isMobile = window.innerWidth <= 768;
+          const maxHeight = isMobile ? vh : Math.min(vh * 0.8, 800);
+          
+          // Opdater CSS variabler
+          document.documentElement.style.setProperty('--real-vh', vh + 'px');
+          document.documentElement.style.setProperty('--max-height', maxHeight + 'px');
+          
+          // Opdater container højde direkte
+          const container = document.querySelector('.landing-page-container');
+          if (container) {
+            container.style.height = maxHeight + 'px';
+            container.style.maxHeight = maxHeight + 'px';
+          }
+        }
+
+        // Kør ved start
+        setViewportHeight();
+        
+        // Kør når vinduet ændrer størrelse
+        let resizeTimer;
+        window.addEventListener('resize', () => {
+          clearTimeout(resizeTimer);
+          resizeTimer = setTimeout(setViewportHeight, 100);
+        });
+
+        window.addEventListener('orientationchange', () => {
+          setTimeout(setViewportHeight, 200);
+        });
+
+        window.addEventListener('load', setViewportHeight);
+      </script>
+    `;
+
+    // Forbedret CSS styling
+    const mobileStyles = `
+      ${page.customStyles || ''}
+      
+      :root {
+        --real-vh: 100vh;
+        --max-height: 800px;
+      }
+
+      html, body {
+        margin: 0;
+        padding: 0;
+        min-height: 100%;
+      }
+
+      body {
+        display: flex;
+        justify-content: center;
+        align-items: center;
+        background-color: #f5f5f5;
+      }
+
+      .landing-page-container {
+        width: 100%;
+        max-width: 800px;
+        height: var(--max-height);
+        max-height: var(--max-height);
+        overflow-y: auto;
+        -webkit-overflow-scrolling: touch;
+        position: relative;
+        margin: 20px auto;
+        border-radius: 12px;
+        box-shadow: 0 4px 6px rgba(0, 0, 0, 0.1);
+      }
+
+      .landing-page-content {
+        height: 100%;
+        width: 100%;
+        display: flex;
+        flex-direction: column;
+      }
+
+      @supports (-webkit-touch-callout: none) {
+        .landing-page-container {
+          height: -webkit-fill-available;
+          max-height: -webkit-fill-available;
+        }
+      }
+
+      @media screen and (max-width: 768px) {
+        body {
+          background-color: white;
+        }
+        
+        .landing-page-container {
+          margin: 0;
+          height: 100vh;
+          max-height: var(--real-vh);
+          border-radius: 0;
+          box-shadow: none;
+        }
+      }
+
+      @media screen and (min-width: 769px) {
+        .landing-page-container {
+          background-color: white;
+          transition: height 0.3s ease-in-out;
+        }
+      }
+    `;
+
+    // Opdater page styling og scripts
+    page.customStyles = mobileStyles;
+    page.scripts = mobileHeightScript + (page.scripts || '');
+
     res.json(page);
   } catch (error) {
     console.error('Fejl ved hentning af landing page:', error);
@@ -2406,8 +2771,108 @@ process.on('SIGINT', async () => {
     process.exit(0);
 });
 
+// Dashboard endpoint
+app.get('/api/dashboard', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+
+    // Hent brugerens stands
+    const stands = await Stand.find({ userId: user._id }).sort({ createdAt: -1 });
+
+    // Hent brugerens landing pages
+    const landingPages = await LandingPage.find({ userId: user._id }).sort({ createdAt: -1 });
+
+    res.json({
+      user: {
+        username: user.username,
+        email: user.email,
+        isAdmin: user.isAdmin,
+        googlePlaceId: user.googlePlaceId
+      },
+      stands,
+      landingPages
+    });
+  } catch (error) {
+    console.error('Fejl ved hentning af dashboard data:', error);
+    res.status(500).json({ 
+      message: 'Der opstod en fejl ved hentning af dashboard data',
+      error: error.message 
+    });
+  }
+});
+
+// Google Business logout endpoint
+app.post('/api/auth/google-business/logout', authenticateToken, async (req, res) => {
+  try {
+    const user = await User.findById(req.session.userId);
+    if (!user) {
+      return res.status(404).json({ message: 'Bruger ikke fundet' });
+    }
+
+    // Nulstil Google tokens
+    user.googleAccessToken = null;
+    user.googleRefreshToken = null;
+    await user.save();
+
+    // Ryd cache for brugerens anmeldelser
+    if (user.googlePlaceId) {
+      const cacheKey = `reviews_${user.googlePlaceId}`;
+      businessCache.del(cacheKey);
+    }
+
+    res.json({ message: 'Logget ud af Google Business Profile' });
+  } catch (error) {
+    console.error('Fejl ved logout fra Google Business:', error);
+    res.status(500).json({ 
+      message: 'Der opstod en fejl ved logout fra Google Business Profile',
+      error: error.message 
+    });
+  }
+});
+
+// Serve static files fra frontend build
+app.use(express.static(path.join(__dirname, 'frontend/build')));
+
+// Handle alle andre routes ved at sende index.html
+app.get('*', (req, res) => {
+  res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+});
+
 // Start serveren
 const PORT = process.env.PORT || 3000;
 app.listen(PORT, () => {
     console.log(`Server kører på port ${PORT}`);
 });
+
+// Landing page viewport height endpoint
+app.get('/api/viewport-height', (req, res) => {
+  // Send en simpel HTML-side der returnerer viewport højden
+  res.send(`
+    <!DOCTYPE html>
+    <html>
+      <head>
+        <meta name="viewport" content="width=device-width, initial-scale=1">
+        <script>
+          // Beregn den faktiske viewport højde og send den tilbage til parent
+          function sendViewportHeight() {
+            const vh = window.innerHeight;
+            window.parent.postMessage({ type: 'viewportHeight', height: vh }, '*');
+          }
+          
+          // Send højden ved load og resize
+          window.addEventListener('load', sendViewportHeight);
+          window.addEventListener('resize', sendViewportHeight);
+        </script>
+      </head>
+      <body style="margin:0;padding:0;">
+      </body>
+    </html>
+  `);
+});
+
+app.use('/api/landing-pages', landingPagesRouter);
+app.use('/api/user', userRouter);
+app.use('/api/dashboard', userRouter);
