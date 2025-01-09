@@ -160,12 +160,24 @@ const corsOptions = {
     : ['http://localhost:3001', 'http://localhost:3000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
-  allowedHeaders: ['Content-Type', 'Authorization']
+  allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
+  exposedHeaders: ['set-cookie'],
+  preflightContinue: false,
+  optionsSuccessStatus: 204
 };
 
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
+
+// Tilføj ekstra headers for at hjælpe med CORS
+app.use((req, res, next) => {
+    res.header('Access-Control-Allow-Credentials', 'true');
+    if (process.env.NODE_ENV === 'production') {
+        res.header('Access-Control-Allow-Origin', req.headers.origin);
+    }
+    next();
+});
 
 // Session konfiguration
 app.use(session({
@@ -174,14 +186,18 @@ app.use(session({
     saveUninitialized: false,
     store: MongoStore.create({ 
         mongoUrl: process.env.MONGODB_URI,
-        ttl: 24 * 60 * 60 // 1 dag
+        ttl: 24 * 60 * 60,
+        autoRemove: 'native',
+        touchAfter: 24 * 3600
     }),
     cookie: {
         secure: process.env.NODE_ENV === 'production',
         httpOnly: true,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
-        maxAge: 24 * 60 * 60 * 1000 // 1 dag
-    }
+        maxAge: 24 * 60 * 60 * 1000,
+        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : 'localhost'
+    },
+    proxy: true
 }));
 
 // Initialize Passport
@@ -196,6 +212,17 @@ app.use((req, res, next) => {
         user: req.user,
         session: req.session
     });
+    next();
+});
+
+// Tilføj ekstra debug logging for session problemer
+app.use((req, res, next) => {
+    if (!req.session) {
+        console.error('Session ikke tilgængelig:', {
+            headers: req.headers,
+            cookies: req.cookies
+        });
+    }
     next();
 });
 
@@ -377,7 +404,7 @@ passport.use(new GoogleStrategy({
     clientSecret: process.env.GOOGLE_CLIENT_SECRET,
     callbackURL: process.env.NODE_ENV === 'production'
         ? "https://api.tapfeed.dk/api/auth/google/callback"
-        : "http://localhost:3000/api/auth/google/callback",
+        : "http://localhost:3001/api/auth/google/callback",
     proxy: true
 },
 async function(accessToken, refreshToken, profile, cb) {
@@ -1430,18 +1457,8 @@ app.get('/:standerId', async (req, res, next) => {
 
     // Registrer klik og tidspunkt
     stand.clicks = (stand.clicks || 0) + 1;
-    
-    // Gem tidspunkt i UTC uden at justere for tidszone
-    const now = new Date();
-    stand.clickHistory.push({ timestamp: now });
-    
+    stand.clickHistory.push({ timestamp: new Date() });
     await stand.save();
-
-    console.log('Klik registreret:', {
-      standerId: stand.standerId,
-      clicks: stand.clicks,
-      clickTime: now.toISOString()
-    });
 
     // Hvis produktet er claimed men ikke har nogen redirect URL eller landing page
     if (stand.status === 'claimed' && !stand.redirectUrl && !stand.landingPageId) {
@@ -1459,16 +1476,6 @@ app.get('/:standerId', async (req, res, next) => {
     if (stand.landingPageId) {
       console.log('Redirecting to landing page:', `${frontendUrl}/landing/${stand.landingPageId}`);
       return res.redirect(`${frontendUrl}/landing/${stand.landingPageId}`);
-    }
-
-    // Hvis produktet har en redirect URL, brug den
-    if (stand.redirectUrl) {
-      // Sikr at URL'en starter med http:// eller https://
-      const redirectUrl = stand.redirectUrl.startsWith('http') 
-        ? stand.redirectUrl 
-        : `https://${stand.redirectUrl}`;
-      console.log('Redirecting to external URL:', redirectUrl);
-      return res.redirect(redirectUrl);
     }
 
     // Hvis ingen redirect URL eller landing page er sat, redirect til not-configured siden
