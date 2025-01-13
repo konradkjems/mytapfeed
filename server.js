@@ -38,6 +38,7 @@ const crypto = require('crypto');
 const QRCode = require('qrcode');
 const adminRouter = require('./routes/admin');
 const { requireAuth, isAdmin } = require('./middleware/auth');
+const standsRouter = require('./routes/stands');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -206,7 +207,7 @@ const corsOptions = {
         'https://my.tapfeed.dk',
         'https://api.tapfeed.dk',
         'https://tapfeed.dk',
-        /^https:\/\/.*\.tapfeed\.dk$/  // Tillad alle subdomains med https
+        /\.tapfeed\.dk$/  // Tillad alle subdomains
       ]
     : ['http://localhost:3001', 'http://localhost:3000'],
   credentials: true,
@@ -225,16 +226,6 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Credentials', 'true');
     if (process.env.NODE_ENV === 'production') {
-        const origin = req.headers.origin;
-        if (origin && (
-          origin === 'https://my.tapfeed.dk' || 
-          origin === 'https://api.tapfeed.dk' || 
-          origin === 'https://tapfeed.dk' ||
-          /^https:\/\/.*\.tapfeed\.dk$/.test(origin)
-        )) {
-          res.header('Access-Control-Allow-Origin', origin);
-        }
-    } else {
         res.header('Access-Control-Allow-Origin', req.headers.origin);
     }
     next();
@@ -291,7 +282,7 @@ app.use((req, res, next) => {
 app.use('/api/admin', adminRouter);
 app.use('/api/landing-pages', landingPagesRouter);
 app.use('/api/user', userRouter);
-app.use('/api/stands', require('./routes/stands')); // Tilføj denne linje
+app.use('/api/stands', standsRouter);  // Tilføj stands router
 
 // Basic routes
 app.get('/', (req, res) => {
