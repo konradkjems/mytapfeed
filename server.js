@@ -201,14 +201,35 @@ app.get('/:urlPath', async (req, res, next) => {
 
 // CORS konfiguration
 const corsOptions = {
-  origin: process.env.NODE_ENV === 'production' 
-    ? [
-        'https://my.tapfeed.dk',
-        'https://api.tapfeed.dk',
-        'https://tapfeed.dk',
-        /\.tapfeed\.dk$/  // Tillad alle subdomains
-      ]
-    : ['http://localhost:3001', 'http://localhost:3000'],
+  origin: (origin, callback) => {
+    const allowedOrigins = process.env.NODE_ENV === 'production'
+      ? [
+          'https://my.tapfeed.dk',
+          'https://api.tapfeed.dk',
+          'https://tapfeed.dk',
+          /^https:\/\/.*\.tapfeed\.dk$/  // Tillad alle tapfeed.dk subdomains
+        ]
+      : ['http://localhost:3001', 'http://localhost:3000'];
+
+    // Tillad requests uden origin (f.eks. fra Postman eller direkte browser requests)
+    if (!origin) {
+      return callback(null, true);
+    }
+
+    // Tjek om origin matcher nogle af de tilladte origins
+    const isAllowed = allowedOrigins.some(allowedOrigin => {
+      if (allowedOrigin instanceof RegExp) {
+        return allowedOrigin.test(origin);
+      }
+      return allowedOrigin === origin;
+    });
+
+    if (isAllowed) {
+      callback(null, true);
+    } else {
+      callback(new Error('CORS ikke tilladt'));
+    }
+  },
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
   allowedHeaders: ['Content-Type', 'Authorization', 'Cookie'],
@@ -401,13 +422,17 @@ app.get('/api/stands/:standerId', async (req, res) => {
       return res.status(404).json({ message: 'Produkt ikke fundet' });
     }
 
-    // Send kun de nødvendige offentlige informationer
+    // Send alle nødvendige informationer
     const publicStand = {
       _id: stand._id,
       standerId: stand.standerId,
       status: stand.status,
       redirectUrl: stand.redirectUrl,
-      landingPageId: stand.landingPageId
+      landingPageId: stand.landingPageId,
+      claimed: stand.claimed,
+      configured: stand.configured,
+      type: stand.type,
+      name: stand.name
     };
 
     res.json(publicStand);
