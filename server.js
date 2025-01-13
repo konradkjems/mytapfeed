@@ -137,16 +137,62 @@ app.get('/landing/:id', async (req, res) => {
 // Tilføj denne nye route i stedet
 app.get('/:urlPath', async (req, res, next) => {
   try {
-    const landingPage = await LandingPage.findOne({ urlPath: req.params.urlPath });
-    if (landingPage) {
-      // Redirect til frontend med landing page ID
+    console.log('Håndterer URL path:', req.params.urlPath);
+    
+    // Først tjek om det er en stander ID
+    const stand = await Stand.findOne({ standerId: req.params.urlPath });
+    console.log('Fundet stand:', stand ? {
+      id: stand._id,
+      standerId: stand.standerId,
+      claimed: stand.claimed,
+      configured: stand.configured,
+      redirectUrl: stand.redirectUrl
+    } : 'Ingen stand fundet');
+
+    if (stand) {
       const frontendUrl = process.env.NODE_ENV === 'production'
         ? 'https://my.tapfeed.dk'
         : 'http://localhost:3001';
+
+      // Tjek først om der er et redirect URL
+      if (stand.redirectUrl) {
+        console.log('Redirecter til:', stand.redirectUrl);
+        // Sikr at URL'en har en protokol
+        let redirectUrl = stand.redirectUrl;
+        if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
+          redirectUrl = 'https://' + redirectUrl;
+        }
+        console.log('Formateret redirect URL:', redirectUrl);
+        // Log redirect
+        stand.clicks = (stand.clicks || 0) + 1;
+        await stand.save();
+        return res.redirect(redirectUrl);
+      }
+      // Hvis ikke redirect URL, tjek claimed/configured status
+      else if (!stand.claimed) {
+        console.log('Redirecter til unclaimed side');
+        return res.redirect(`${frontendUrl}/unclaimed/${stand.standerId}`);
+      } else if (!stand.configured) {
+        console.log('Redirecter til not-configured side');
+        return res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
+      }
+    }
+
+    // Hvis det ikke er en stander, tjek om det er en landing page
+    const landingPage = await LandingPage.findOne({ urlPath: req.params.urlPath });
+    console.log('Fundet landing page:', landingPage ? landingPage._id : 'Ingen landing page fundet');
+    
+    if (landingPage) {
+      const frontendUrl = process.env.NODE_ENV === 'production'
+        ? 'https://my.tapfeed.dk'
+        : 'http://localhost:3001';
+      console.log('Redirecter til landing page:', `${frontendUrl}/landing/${landingPage._id}`);
       return res.redirect(`${frontendUrl}/landing/${landingPage._id}`);
     }
-    // Hvis ingen landing page findes, fortsæt til næste route
-    next();
+
+    // Hvis hverken stander eller landing page findes
+    console.log('Ingen match fundet - sender 404');
+    res.status(404).send('Side ikke fundet');
   } catch (error) {
     console.error('Fejl ved håndtering af URL path:', error);
     next(error);
@@ -156,7 +202,12 @@ app.get('/:urlPath', async (req, res, next) => {
 // CORS konfiguration
 const corsOptions = {
   origin: process.env.NODE_ENV === 'production' 
-    ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk', 'https://tapfeed.dk']
+    ? [
+        'https://my.tapfeed.dk',
+        'https://api.tapfeed.dk',
+        'https://tapfeed.dk',
+        /\.tapfeed\.dk$/  // Tillad alle subdomains
+      ]
     : ['http://localhost:3001', 'http://localhost:3000'],
   credentials: true,
   methods: ['GET', 'POST', 'PUT', 'DELETE', 'OPTIONS'],
@@ -3072,5 +3123,62 @@ app.get('/api/admin/statistics', authenticateToken, async (req, res) => {
   } catch (error) {
     console.error('Fejl ved hentning af systemstatistik:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved hentning af statistik' });
+  }
+});
+
+// Kontaktformular endpoint
+app.post('/api/contact', async (req, res) => {
+  try {
+    const { name, email, subject, message } = req.body;
+
+    // Opret email transporter
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD
+      }
+    });
+
+    // Send email
+    await transporter.sendMail({
+      from: {
+        name: 'TapFeed Kontaktformular',
+        address: process.env.GMAIL_USER
+      },
+      replyTo: email,
+      to: process.env.GMAIL_USER,
+      subject: `Ny kontaktformular besked: ${subject}`,
+      html: `
+        <h2>Ny besked fra kontaktformularen</h2>
+        <p><strong>Navn:</strong> ${name}</p>
+        <p><strong>Email:</strong> ${email}</p>
+        <p><strong>Emne:</strong> ${subject}</p>
+        <p><strong>Besked:</strong></p>
+        <p>${message}</p>
+      `
+    });
+
+    // Send autosvar til afsender
+    await transporter.sendMail({
+      from: {
+        name: 'TapFeed Support',
+        address: process.env.GMAIL_USER
+      },
+      to: email,
+      subject: 'Tak for din henvendelse - TapFeed',
+      html: `
+        <p>Hej ${name},</p>
+        <p>Tak for din henvendelse. Vi har modtaget din besked og vender tilbage hurtigst muligt.</p>
+        <br>
+        <p>Med venlig hilsen</p>
+        <p>TapFeed Support</p>
+      `
+    });
+
+    res.json({ message: 'Besked sendt succesfuldt' });
+  } catch (error) {
+    console.error('Fejl ved afsendelse af kontaktformular:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved afsendelse af beskeden' });
   }
 });
