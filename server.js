@@ -206,7 +206,7 @@ const corsOptions = {
         'https://my.tapfeed.dk',
         'https://api.tapfeed.dk',
         'https://tapfeed.dk',
-        /\.tapfeed\.dk$/  // Tillad alle subdomains
+        /^https:\/\/.*\.tapfeed\.dk$/  // Tillad alle subdomains med https
       ]
     : ['http://localhost:3001', 'http://localhost:3000'],
   credentials: true,
@@ -225,6 +225,16 @@ app.use(express.urlencoded({ extended: true }));
 app.use((req, res, next) => {
     res.header('Access-Control-Allow-Credentials', 'true');
     if (process.env.NODE_ENV === 'production') {
+        const origin = req.headers.origin;
+        if (origin && (
+          origin === 'https://my.tapfeed.dk' || 
+          origin === 'https://api.tapfeed.dk' || 
+          origin === 'https://tapfeed.dk' ||
+          /^https:\/\/.*\.tapfeed\.dk$/.test(origin)
+        )) {
+          res.header('Access-Control-Allow-Origin', origin);
+        }
+    } else {
         res.header('Access-Control-Allow-Origin', req.headers.origin);
     }
     next();
@@ -281,6 +291,7 @@ app.use((req, res, next) => {
 app.use('/api/admin', adminRouter);
 app.use('/api/landing-pages', landingPagesRouter);
 app.use('/api/user', userRouter);
+app.use('/api/stands', require('./routes/stands')); // Tilføj denne linje
 
 // Basic routes
 app.get('/', (req, res) => {
