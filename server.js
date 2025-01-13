@@ -38,7 +38,6 @@ const crypto = require('crypto');
 const QRCode = require('qrcode');
 const adminRouter = require('./routes/admin');
 const { requireAuth, isAdmin } = require('./middleware/auth');
-const standsRouter = require('./routes/stands');
 
 // Cache konfiguration
 const businessCache = new NodeCache({ 
@@ -282,7 +281,6 @@ app.use((req, res, next) => {
 app.use('/api/admin', adminRouter);
 app.use('/api/landing-pages', landingPagesRouter);
 app.use('/api/user', userRouter);
-app.use('/api/stands', standsRouter);  // Tilføj stands router
 
 // Basic routes
 app.get('/', (req, res) => {
