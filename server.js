@@ -1462,25 +1462,35 @@ app.get('/:standerId', async (req, res, next) => {
 
     // Hvis produktet er claimed men ikke har nogen redirect URL eller landing page
     if (stand.status === 'claimed' && !stand.redirectUrl && !stand.landingPageId) {
-      console.log('Redirecting not configured product to:', `${frontendUrl}/not-configured/${stand.standerId}`);
-      return res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
+      const notConfiguredUrl = `${frontendUrl}/not-configured/${stand.standerId}`;
+      console.log('Redirecting not configured product to:', notConfiguredUrl);
+      return res.redirect(302, notConfiguredUrl);
     }
 
     // Hvis produktet er unclaimed, vis unclaimed siden
     if (stand.status === 'unclaimed') {
-      console.log('Redirecting unclaimed product to:', `${frontendUrl}/unclaimed/${stand.standerId}`);
-      return res.redirect(`${frontendUrl}/unclaimed/${stand.standerId}`);
+      const unclaimedUrl = `${frontendUrl}/unclaimed/${stand.standerId}`;
+      console.log('Redirecting unclaimed product to:', unclaimedUrl);
+      return res.redirect(302, unclaimedUrl);
     }
 
     // Hvis produktet har en landing page, redirect til den
     if (stand.landingPageId) {
-      console.log('Redirecting to landing page:', `${frontendUrl}/landing/${stand.landingPageId}`);
-      return res.redirect(`${frontendUrl}/landing/${stand.landingPageId}`);
+      const landingPageUrl = `${frontendUrl}/landing/${stand.landingPageId}`;
+      console.log('Redirecting to landing page:', landingPageUrl);
+      return res.redirect(302, landingPageUrl);
     }
 
     // Hvis ingen redirect URL eller landing page er sat, redirect til not-configured siden
-    console.log('No redirect configuration found, redirecting to not-configured page');
-    res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
+    if (!stand.redirectUrl) {
+      const notConfiguredUrl = `${frontendUrl}/not-configured/${stand.standerId}`;
+      console.log('No redirect configuration found, redirecting to not-configured page:', notConfiguredUrl);
+      return res.redirect(302, notConfiguredUrl);
+    }
+
+    // Ellers redirect til den konfigurerede URL
+    console.log('Redirecting to configured URL:', stand.redirectUrl);
+    res.redirect(302, stand.redirectUrl);
   } catch (error) {
     console.error('Fejl ved redirect:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved håndtering af redirect' });
@@ -2552,16 +2562,16 @@ app.get('/api/landing/:id', async (req, res) => {
 
     // Tillad CORS for dette endpoint
     const allowedOrigins = process.env.NODE_ENV === 'production' 
-      ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk']
+      ? ['https://my.tapfeed.dk', 'https://api.tapfeed.dk', 'https://tapfeed.dk']
       : ['http://localhost:3001', 'http://localhost:3000'];
 
     const origin = req.headers.origin;
     if (allowedOrigins.includes(origin)) {
       res.header('Access-Control-Allow-Origin', origin);
+      res.header('Access-Control-Allow-Credentials', 'true');
+      res.header('Access-Control-Allow-Methods', 'GET');
+      res.header('Access-Control-Allow-Headers', 'Content-Type');
     }
-    res.header('Access-Control-Allow-Methods', 'GET');
-    res.header('Access-Control-Allow-Headers', 'Content-Type');
-    res.header('Access-Control-Allow-Credentials', 'true');
 
     res.json(page);
   } catch (error) {
