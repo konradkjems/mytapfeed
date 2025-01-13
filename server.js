@@ -93,113 +93,7 @@ if (!app) {
     app = express();
 }
 
-// Funktion til at tjekke om en request kommer fra et subdomain
-const getSubdomain = (host) => {
-  const parts = host.split('.');
-  if (parts.length > 2) {
-    return parts[0];
-  }
-  return null;
-};
-
-// Middleware til at håndtere subdomains
-app.use(async (req, res, next) => {
-  const subdomain = getSubdomain(req.hostname);
-  
-  if (subdomain) {
-    try {
-      const landingPage = await LandingPage.findOne({ subdomain });
-      if (landingPage) {
-        // Send landing page data
-        return res.json(landingPage);
-      }
-    } catch (error) {
-      console.error('Fejl ved håndtering af subdomain:', error);
-    }
-  }
-  next();
-});
-
-// Tilføj denne nye route før landing page route
-app.get('/landing/:id', async (req, res) => {
-  try {
-    const landingPage = await LandingPage.findById(req.params.id);
-    if (landingPage) {
-      return res.json(landingPage);
-    }
-    res.status(404).json({ message: 'Landing page ikke fundet' });
-  } catch (error) {
-    console.error('Fejl ved hentning af landing page:', error);
-    res.status(500).json({ message: 'Serverfejl' });
-  }
-});
-
-// Tilføj denne nye route i stedet
-app.get('/:urlPath', async (req, res, next) => {
-  try {
-    console.log('Håndterer URL path:', req.params.urlPath);
-    
-    // Først tjek om det er en stander ID
-    const stand = await Stand.findOne({ standerId: req.params.urlPath });
-    console.log('Fundet stand:', stand ? {
-      id: stand._id,
-      standerId: stand.standerId,
-      claimed: stand.claimed,
-      configured: stand.configured,
-      redirectUrl: stand.redirectUrl
-    } : 'Ingen stand fundet');
-
-    if (stand) {
-      const frontendUrl = process.env.NODE_ENV === 'production'
-        ? 'https://my.tapfeed.dk'
-        : 'http://localhost:3001';
-
-      // Tjek først om der er et redirect URL
-      if (stand.redirectUrl) {
-        console.log('Redirecter til:', stand.redirectUrl);
-        // Sikr at URL'en har en protokol
-        let redirectUrl = stand.redirectUrl;
-        if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
-          redirectUrl = 'https://' + redirectUrl;
-        }
-        console.log('Formateret redirect URL:', redirectUrl);
-        // Log redirect
-        stand.clicks = (stand.clicks || 0) + 1;
-        await stand.save();
-        return res.redirect(redirectUrl);
-      }
-      // Hvis ikke redirect URL, tjek claimed/configured status
-      else if (!stand.claimed) {
-        console.log('Redirecter til unclaimed side');
-        return res.redirect(`${frontendUrl}/unclaimed/${stand.standerId}`);
-      } else if (!stand.configured) {
-        console.log('Redirecter til not-configured side');
-        return res.redirect(`${frontendUrl}/not-configured/${stand.standerId}`);
-      }
-    }
-
-    // Hvis det ikke er en stander, tjek om det er en landing page
-    const landingPage = await LandingPage.findOne({ urlPath: req.params.urlPath });
-    console.log('Fundet landing page:', landingPage ? landingPage._id : 'Ingen landing page fundet');
-    
-    if (landingPage) {
-      const frontendUrl = process.env.NODE_ENV === 'production'
-        ? 'https://my.tapfeed.dk'
-        : 'http://localhost:3001';
-      console.log('Redirecter til landing page:', `${frontendUrl}/landing/${landingPage._id}`);
-      return res.redirect(`${frontendUrl}/landing/${landingPage._id}`);
-    }
-
-    // Hvis hverken stander eller landing page findes
-    console.log('Ingen match fundet - sender 404');
-    res.status(404).send('Side ikke fundet');
-  } catch (error) {
-    console.error('Fejl ved håndtering af URL path:', error);
-    next(error);
-  }
-});
-
-// CORS konfiguration
+// CORS konfiguration først
 const corsOptions = {
   origin: (origin, callback) => {
     const allowedOrigins = process.env.NODE_ENV === 'production'
@@ -207,24 +101,13 @@ const corsOptions = {
           'https://my.tapfeed.dk',
           'https://api.tapfeed.dk',
           'https://tapfeed.dk',
-          /^https:\/\/.*\.tapfeed\.dk$/  // Tillad alle tapfeed.dk subdomains
+          /^https:\/\/.*\.tapfeed\.dk$/
         ]
       : ['http://localhost:3001', 'http://localhost:3000'];
 
-    // Tillad requests uden origin (f.eks. fra Postman eller direkte browser requests)
-    if (!origin) {
-      return callback(null, true);
-    }
-
-    // Tjek om origin matcher nogle af de tilladte origins
-    const isAllowed = allowedOrigins.some(allowedOrigin => {
-      if (allowedOrigin instanceof RegExp) {
-        return allowedOrigin.test(origin);
-      }
-      return allowedOrigin === origin;
-    });
-
-    if (isAllowed) {
+    if (!origin || allowedOrigins.some(allowed => 
+      allowed instanceof RegExp ? allowed.test(origin) : allowed === origin
+    )) {
       callback(null, true);
     } else {
       callback(new Error('CORS ikke tilladt'));
@@ -238,18 +121,10 @@ const corsOptions = {
   optionsSuccessStatus: 204
 };
 
+// Anvend CORS før alle andre middleware
 app.use(cors(corsOptions));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
-
-// Tilføj ekstra headers for at hjælpe med CORS
-app.use((req, res, next) => {
-    res.header('Access-Control-Allow-Credentials', 'true');
-    if (process.env.NODE_ENV === 'production') {
-        res.header('Access-Control-Allow-Origin', req.headers.origin);
-    }
-    next();
-});
 
 // Session konfiguration
 app.use(session({
@@ -416,13 +291,21 @@ app.get('/api/stands/unclaimed', authenticateToken, async (req, res) => {
 // Offentligt endpoint til at hente et enkelt produkt baseret på standerId
 app.get('/api/stands/:standerId', async (req, res) => {
   try {
+    console.log('Henter stand med ID:', req.params.standerId);
     const stand = await Stand.findOne({ standerId: req.params.standerId });
     
     if (!stand) {
+      console.log('Stand ikke fundet');
       return res.status(404).json({ message: 'Produkt ikke fundet' });
     }
 
-    // Send alle nødvendige informationer
+    console.log('Stand fundet:', {
+      id: stand._id,
+      standerId: stand.standerId,
+      claimed: stand.claimed,
+      configured: stand.configured
+    });
+
     const publicStand = {
       _id: stand._id,
       standerId: stand.standerId,
@@ -1516,60 +1399,59 @@ app.post('/api/stands/reorder', authenticateToken, async (req, res) => {
 });
 
 // Redirect endpoint for stands (skal være før alle andre routes)
-app.get('/:standerId', async (req, res, next) => {
+app.get('/:urlPath', async (req, res, next) => {
   try {
-    console.log('Modtaget redirect anmodning for:', req.params.standerId);
-    const stand = await Stand.findOne({ standerId: req.params.standerId });
+    console.log('Håndterer URL path:', req.params.urlPath);
     
-    if (!stand) {
-      console.log('Produkt ikke fundet:', req.params.standerId);
-      return res.status(404).json({ message: 'Produkt ikke fundet' });
+    const stand = await Stand.findOne({ standerId: req.params.urlPath });
+    console.log('Fundet stand:', stand ? {
+      id: stand._id,
+      standerId: stand.standerId,
+      claimed: stand.claimed,
+      configured: stand.configured,
+      redirectUrl: stand.redirectUrl
+    } : 'Ingen stand fundet');
+
+    if (stand) {
+      const frontendUrl = process.env.NODE_ENV === 'production'
+        ? 'https://my.tapfeed.dk'
+        : 'http://localhost:3001';
+
+      if (stand.redirectUrl) {
+        let redirectUrl = stand.redirectUrl;
+        if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
+          redirectUrl = 'https://' + redirectUrl;
+        }
+        console.log('Redirecter til:', redirectUrl);
+        stand.clicks = (stand.clicks || 0) + 1;
+        await stand.save();
+        return res.redirect(redirectUrl);
+      } else if (!stand.claimed) {
+        const unclaimedUrl = `${frontendUrl}/unclaimed/${stand.standerId}`;
+        console.log('Redirecter til unclaimed:', unclaimedUrl);
+        return res.redirect(unclaimedUrl);
+      } else if (!stand.configured) {
+        const notConfiguredUrl = `${frontendUrl}/not-configured/${stand.standerId}`;
+        console.log('Redirecter til not-configured:', notConfiguredUrl);
+        return res.redirect(notConfiguredUrl);
+      }
     }
 
-    // Definer frontend URL baseret på miljø
-    const frontendUrl = process.env.NODE_ENV === 'production'
-      ? 'https://my.tapfeed.dk'
-      : 'http://localhost:3001';
-
-    // Registrer klik og tidspunkt
-    stand.clicks = (stand.clicks || 0) + 1;
-    stand.clickHistory.push({ timestamp: new Date() });
-    await stand.save();
-
-    // Hvis produktet er claimed men ikke har nogen redirect URL eller landing page
-    if (stand.status === 'claimed' && !stand.redirectUrl && !stand.landingPageId) {
-      const notConfiguredUrl = `${frontendUrl}/not-configured/${stand.standerId}`;
-      console.log('Redirecting not configured product to:', notConfiguredUrl);
-      return res.redirect(302, notConfiguredUrl);
+    const landingPage = await LandingPage.findOne({ urlPath: req.params.urlPath });
+    if (landingPage) {
+      const frontendUrl = process.env.NODE_ENV === 'production'
+        ? 'https://my.tapfeed.dk'
+        : 'http://localhost:3001';
+      const landingPageUrl = `${frontendUrl}/landing/${landingPage._id}`;
+      console.log('Redirecter til landing page:', landingPageUrl);
+      return res.redirect(landingPageUrl);
     }
 
-    // Hvis produktet er unclaimed, vis unclaimed siden
-    if (stand.status === 'unclaimed') {
-      const unclaimedUrl = `${frontendUrl}/unclaimed/${stand.standerId}`;
-      console.log('Redirecting unclaimed product to:', unclaimedUrl);
-      return res.redirect(302, unclaimedUrl);
-    }
-
-    // Hvis produktet har en landing page, redirect til den
-    if (stand.landingPageId) {
-      const landingPageUrl = `${frontendUrl}/landing/${stand.landingPageId}`;
-      console.log('Redirecting to landing page:', landingPageUrl);
-      return res.redirect(302, landingPageUrl);
-    }
-
-    // Hvis ingen redirect URL eller landing page er sat, redirect til not-configured siden
-    if (!stand.redirectUrl) {
-      const notConfiguredUrl = `${frontendUrl}/not-configured/${stand.standerId}`;
-      console.log('No redirect configuration found, redirecting to not-configured page:', notConfiguredUrl);
-      return res.redirect(302, notConfiguredUrl);
-    }
-
-    // Ellers redirect til den konfigurerede URL
-    console.log('Redirecting to configured URL:', stand.redirectUrl);
-    res.redirect(302, stand.redirectUrl);
+    console.log('Ingen match fundet - sender 404');
+    res.status(404).send('Side ikke fundet');
   } catch (error) {
-    console.error('Fejl ved redirect:', error);
-    res.status(500).json({ message: 'Der opstod en fejl ved håndtering af redirect' });
+    console.error('Fejl ved håndtering af URL path:', error);
+    next(error);
   }
 });
 
