@@ -93,124 +93,7 @@ if (!app) {
     app = express();
 }
 
-// Definer stien til frontend build mappen
-const getFrontendBuildPath = () => {
-  if (process.env.NODE_ENV === 'production') {
-    // Tjek om vi kører på Vercel
-    if (process.env.VERCEL) {
-      return path.join(process.cwd(), '.next/static');
-    }
-    return path.join(__dirname, 'frontend/build');
-  }
-  return null;
-};
-
-// Serve statiske filer fra frontend build mappen i production
-if (process.env.NODE_ENV === 'production') {
-  const buildPath = getFrontendBuildPath();
-  console.log('Serving static files from:', buildPath);
-  
-  // Hvis vi er på Vercel, redirect til frontend
-  if (process.env.VERCEL) {
-    app.use((req, res, next) => {
-      if (!req.path.startsWith('/api')) {
-        const frontendUrl = 'https://my.tapfeed.dk';
-        console.log('Redirecting to frontend:', frontendUrl + req.path);
-        return res.redirect(302, frontendUrl + req.path);
-      }
-      next();
-    });
-  } else {
-    app.use(express.static(buildPath));
-  }
-}
-
-// Opdater frontend routes handler
-app.get(['/unclaimed/*', '/not-configured/*', '/landing/*'], (req, res, next) => {
-  try {
-    console.log('Håndterer specifik frontend route:', {
-      path: req.path,
-      environment: process.env.NODE_ENV,
-      host: req.get('host'),
-      vercel: !!process.env.VERCEL
-    });
-    
-    // Hvis vi er på Vercel, redirect til frontend
-    if (process.env.VERCEL) {
-      const frontendUrl = 'https://my.tapfeed.dk';
-      console.log('Redirecting to frontend:', frontendUrl + req.path);
-      return res.redirect(302, frontendUrl + req.path);
-    }
-
-    const buildPath = getFrontendBuildPath();
-    if (!buildPath) {
-      return next();
-    }
-
-    const indexPath = path.join(buildPath, 'index.html');
-    
-    if (fs.existsSync(indexPath)) {
-      res.sendFile(indexPath);
-    } else {
-      console.error('index.html ikke fundet i:', indexPath);
-      // Redirect til frontend i stedet for at vise fejl
-      const frontendUrl = 'https://my.tapfeed.dk';
-      res.redirect(302, frontendUrl + req.path);
-    }
-  } catch (error) {
-    console.error('Fejl ved serving af frontend route:', error);
-    next(error);
-  }
-});
-
-// Opdater catch-all route
-app.get('*', (req, res, next) => {
-  try {
-    // Hvis det er en API route, gå videre til næste handler
-    if (req.path.startsWith('/api/')) {
-      return next();
-    }
-
-    console.log('Håndterer catch-all route:', {
-      path: req.path,
-      environment: process.env.NODE_ENV,
-      host: req.get('host'),
-      vercel: !!process.env.VERCEL
-    });
-
-    // Hvis vi er på Vercel, redirect til frontend
-    if (process.env.VERCEL) {
-      const frontendUrl = 'https://my.tapfeed.dk';
-      console.log('Redirecting to frontend:', frontendUrl + req.path);
-      return res.redirect(302, frontendUrl + req.path);
-    }
-
-    if (process.env.NODE_ENV === 'production') {
-      const buildPath = getFrontendBuildPath();
-      if (!buildPath) {
-        return next();
-      }
-
-      const indexPath = path.join(buildPath, 'index.html');
-      
-      if (fs.existsSync(indexPath)) {
-        res.sendFile(indexPath);
-      } else {
-        console.error('index.html ikke fundet i:', indexPath);
-        // Redirect til frontend i stedet for at vise fejl
-        const frontendUrl = 'https://my.tapfeed.dk';
-        res.redirect(302, frontendUrl + req.path);
-      }
-    } else {
-      res.status(404).send('Route ikke fundet');
-    }
-  } catch (error) {
-    console.error('Fejl ved serving af catch-all route:', error);
-    next(error);
-  }
-});
-
-// Opdater CORS konfigurationen
+// CORS konfiguration først
 const corsOptions = {
   origin: (origin, callback) => {
     const allowedOrigins = process.env.NODE_ENV === 'production'
@@ -259,7 +142,7 @@ app.use(session({
         httpOnly: true,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
         maxAge: 24 * 60 * 60 * 1000,
-        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : undefined
+        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : 'localhost'
     },
     proxy: true
 }));
