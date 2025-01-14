@@ -93,43 +93,89 @@ if (!app) {
     app = express();
 }
 
-// Tilføj specifikke frontend routes før catch-all
-app.get(['/unclaimed/*', '/not-configured/*', '/landing/*'], (req, res) => {
-  console.log('Håndterer specifik frontend route:', {
-    path: req.path,
-    environment: process.env.NODE_ENV,
-    host: req.get('host')
-  });
-  
-  // Send index.html for disse specifikke routes
-  res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+// Definer stien til frontend build mappen
+const getFrontendBuildPath = () => {
+  if (process.env.NODE_ENV === 'production') {
+    // Tjek om vi kører på Vercel
+    if (process.env.VERCEL) {
+      return path.join(process.cwd(), 'frontend', 'build');
+    }
+    return path.join(__dirname, 'frontend', 'build');
+  }
+  return null;
+};
+
+// Serve statiske filer fra frontend build mappen i production
+if (process.env.NODE_ENV === 'production') {
+  const buildPath = getFrontendBuildPath();
+  console.log('Serving static files from:', buildPath);
+  app.use(express.static(buildPath));
+}
+
+// Opdater frontend routes handler
+app.get(['/unclaimed/*', '/not-configured/*', '/landing/*'], (req, res, next) => {
+  try {
+    console.log('Håndterer specifik frontend route:', {
+      path: req.path,
+      environment: process.env.NODE_ENV,
+      host: req.get('host')
+    });
+    
+    const buildPath = getFrontendBuildPath();
+    if (!buildPath) {
+      return next();
+    }
+
+    const indexPath = path.join(buildPath, 'index.html');
+    
+    // Tjek om filen eksisterer før vi prøver at sende den
+    if (fs.existsSync(indexPath)) {
+      res.sendFile(indexPath);
+    } else {
+      console.error('index.html ikke fundet i:', indexPath);
+      res.status(404).send('Frontend build ikke fundet');
+    }
+  } catch (error) {
+    console.error('Fejl ved serving af frontend route:', error);
+    next(error);
+  }
 });
 
-// Opdater den eksisterende catch-all route
+// Opdater catch-all route
 app.get('*', (req, res, next) => {
-  // Hvis det er en API route, gå videre til næste handler
-  if (req.path.startsWith('/api/')) {
-    return next();
-  }
-
-  console.log('Håndterer catch-all route:', {
-    path: req.path,
-    environment: process.env.NODE_ENV,
-    host: req.get('host')
-  });
-
-  // For alle andre routes i production, send index.html
-  if (process.env.NODE_ENV === 'production') {
-    // Tjek om filen eksisterer i build mappen
-    const filePath = path.join(__dirname, 'frontend/build', req.path);
-    if (fs.existsSync(filePath)) {
-      res.sendFile(filePath);
-    } else {
-      // Hvis filen ikke findes, send index.html
-      res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+  try {
+    // Hvis det er en API route, gå videre til næste handler
+    if (req.path.startsWith('/api/')) {
+      return next();
     }
-  } else {
-    res.status(404).send('Route ikke fundet');
+
+    console.log('Håndterer catch-all route:', {
+      path: req.path,
+      environment: process.env.NODE_ENV,
+      host: req.get('host')
+    });
+
+    if (process.env.NODE_ENV === 'production') {
+      const buildPath = getFrontendBuildPath();
+      if (!buildPath) {
+        return next();
+      }
+
+      const indexPath = path.join(buildPath, 'index.html');
+      
+      // Tjek om filen eksisterer før vi prøver at sende den
+      if (fs.existsSync(indexPath)) {
+        res.sendFile(indexPath);
+      } else {
+        console.error('index.html ikke fundet i:', indexPath);
+        res.status(404).send('Frontend build ikke fundet');
+      }
+    } else {
+      res.status(404).send('Route ikke fundet');
+    }
+  } catch (error) {
+    console.error('Fejl ved serving af catch-all route:', error);
+    next(error);
   }
 });
 
