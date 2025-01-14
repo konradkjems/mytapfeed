@@ -93,7 +93,47 @@ if (!app) {
     app = express();
 }
 
-// CORS konfiguration først
+// Tilføj specifikke frontend routes før catch-all
+app.get(['/unclaimed/*', '/not-configured/*', '/landing/*'], (req, res) => {
+  console.log('Håndterer specifik frontend route:', {
+    path: req.path,
+    environment: process.env.NODE_ENV,
+    host: req.get('host')
+  });
+  
+  // Send index.html for disse specifikke routes
+  res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+});
+
+// Opdater den eksisterende catch-all route
+app.get('*', (req, res, next) => {
+  // Hvis det er en API route, gå videre til næste handler
+  if (req.path.startsWith('/api/')) {
+    return next();
+  }
+
+  console.log('Håndterer catch-all route:', {
+    path: req.path,
+    environment: process.env.NODE_ENV,
+    host: req.get('host')
+  });
+
+  // For alle andre routes i production, send index.html
+  if (process.env.NODE_ENV === 'production') {
+    // Tjek om filen eksisterer i build mappen
+    const filePath = path.join(__dirname, 'frontend/build', req.path);
+    if (fs.existsSync(filePath)) {
+      res.sendFile(filePath);
+    } else {
+      // Hvis filen ikke findes, send index.html
+      res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+    }
+  } else {
+    res.status(404).send('Route ikke fundet');
+  }
+});
+
+// Opdater CORS konfigurationen
 const corsOptions = {
   origin: (origin, callback) => {
     const allowedOrigins = process.env.NODE_ENV === 'production'
@@ -142,7 +182,7 @@ app.use(session({
         httpOnly: true,
         sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
         maxAge: 24 * 60 * 60 * 1000,
-        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : 'localhost'
+        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : undefined
     },
     proxy: true
 }));
@@ -1398,16 +1438,86 @@ app.post('/api/stands/reorder', authenticateToken, async (req, res) => {
     }
 });
 
-// Redirect endpoint for stands (skal være før alle andre routes)
+// API endpoints skal være FØR catch-all routen
+// Endpoint til at tjekke status for et produkt
+app.get('/api/stands/check/:standerId', async (req, res) => {
+  try {
+    const stand = await Stand.findOne({ standerId: req.params.standerId });
+    
+    if (!stand) {
+      return res.status(404).json({ 
+        message: 'Produkt ikke fundet',
+        status: 'not_found'
+      });
+    }
+
+    const status = {
+      standerId: stand.standerId,
+      status: stand.status || (stand.claimed ? 'claimed' : 'unclaimed'),
+      configured: stand.configured,
+      hasRedirect: !!stand.redirectUrl,
+      hasLandingPage: !!stand.landingPageId
+    };
+
+    console.log('Stand status tjek:', status);
+    res.json(status);
+  } catch (error) {
+    console.error('Fejl ved tjek af produkt status:', error);
+    res.status(500).json({ 
+      message: 'Der opstod en fejl ved tjek af produkt status',
+      status: 'error'
+    });
+  }
+});
+
+// Endpoint til at hente detaljer om et unclaimed produkt
+app.get('/api/stands/unclaimed/:standerId', async (req, res) => {
+  try {
+    const stand = await Stand.findOne({ 
+      standerId: req.params.standerId,
+      status: 'unclaimed' // Kun tjek for explicit unclaimed status
+    });
+
+    if (!stand) {
+      return res.status(404).json({ 
+        message: 'Unclaimed produkt ikke fundet' 
+      });
+    }
+
+    res.json({
+      standerId: stand.standerId,
+      productType: stand.productType,
+      createdAt: stand.createdAt
+    });
+  } catch (error) {
+    console.error('Fejl ved hentning af unclaimed produkt:', error);
+    res.status(500).json({ 
+      message: 'Der opstod en fejl ved hentning af unclaimed produkt' 
+    });
+  }
+});
+
+// Catch-all route skal være EFTER alle API endpoints
 app.get('/:urlPath', async (req, res, next) => {
   try {
-    console.log('Håndterer URL path:', req.params.urlPath);
+    // Ignorer requests til /api paths
+    if (req.params.urlPath.startsWith('api/')) {
+      return next();
+    }
+
+    console.log('Håndterer URL path i production:', {
+      path: req.params.urlPath,
+      environment: process.env.NODE_ENV,
+      host: req.get('host'),
+      referer: req.get('referer')
+    });
     
     const stand = await Stand.findOne({ standerId: req.params.urlPath });
     console.log('Fundet stand:', stand ? {
       id: stand._id,
       standerId: stand.standerId,
       status: stand.status,
+      configured: stand.configured,
       redirectUrl: stand.redirectUrl
     } : 'Ingen stand fundet');
 
@@ -1416,26 +1526,41 @@ app.get('/:urlPath', async (req, res, next) => {
         ? 'https://my.tapfeed.dk'
         : 'http://localhost:3001';
 
-      // Tjek specifikt for unclaimed status
+      // Tjek status og konfiguration
       if (stand.status === 'unclaimed') {
         const unclaimedUrl = `${frontendUrl}/unclaimed/${stand.standerId}`;
-        console.log('Redirecter til unclaimed:', unclaimedUrl);
-        return res.redirect(unclaimedUrl);
+        console.log('Redirecter til unclaimed:', {
+          url: unclaimedUrl,
+          standStatus: stand.status,
+          environment: process.env.NODE_ENV
+        });
+        return res.redirect(302, unclaimedUrl);
       } 
+      
+      if (!stand.configured || (!stand.redirectUrl && !stand.landingPageId)) {
+        const notConfiguredUrl = `${frontendUrl}/not-configured/${stand.standerId}`;
+        console.log('Redirecter til not-configured:', {
+          url: notConfiguredUrl,
+          standStatus: stand.status,
+          configured: stand.configured,
+          environment: process.env.NODE_ENV
+        });
+        return res.redirect(302, notConfiguredUrl);
+      }
       
       if (stand.redirectUrl) {
         let redirectUrl = stand.redirectUrl;
         if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
           redirectUrl = 'https://' + redirectUrl;
         }
-        console.log('Redirecter til:', redirectUrl);
+        console.log('Redirecter til ekstern URL:', {
+          url: redirectUrl,
+          standStatus: stand.status,
+          environment: process.env.NODE_ENV
+        });
         stand.clicks = (stand.clicks || 0) + 1;
         await stand.save();
-        return res.redirect(redirectUrl);
-      } else if (!stand.configured) {
-        const notConfiguredUrl = `${frontendUrl}/not-configured/${stand.standerId}`;
-        console.log('Redirecter til not-configured:', notConfiguredUrl);
-        return res.redirect(notConfiguredUrl);
+        return res.redirect(302, redirectUrl);
       }
     }
 
@@ -1445,15 +1570,41 @@ app.get('/:urlPath', async (req, res, next) => {
         ? 'https://my.tapfeed.dk'
         : 'http://localhost:3001';
       const landingPageUrl = `${frontendUrl}/landing/${landingPage._id}`;
-      console.log('Redirecter til landing page:', landingPageUrl);
-      return res.redirect(landingPageUrl);
+      console.log('Redirecter til landing page:', {
+        url: landingPageUrl,
+        environment: process.env.NODE_ENV
+      });
+      return res.redirect(302, landingPageUrl);
     }
 
-    console.log('Ingen match fundet - sender 404');
+    console.log('Ingen match fundet - sender 404:', {
+      path: req.params.urlPath,
+      environment: process.env.NODE_ENV
+    });
     res.status(404).send('Side ikke fundet');
   } catch (error) {
-    console.error('Fejl ved håndtering af URL path:', error);
+    console.error('Fejl ved håndtering af URL path:', {
+      error: error.message,
+      stack: error.stack,
+      path: req.params.urlPath,
+      environment: process.env.NODE_ENV
+    });
     next(error);
+  }
+});
+
+// Tilføj en catch-all route for frontend routes i production
+app.get('*', (req, res) => {
+  console.log('Håndterer frontend route:', {
+    path: req.path,
+    environment: process.env.NODE_ENV
+  });
+  
+  // I production, send index.html for alle ukendte routes
+  if (process.env.NODE_ENV === 'production') {
+    res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+  } else {
+    res.status(404).send('Route ikke fundet');
   }
 });
 
@@ -3089,63 +3240,5 @@ app.post('/api/contact', async (req, res) => {
   } catch (error) {
     console.error('Fejl ved afsendelse af kontaktformular:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved afsendelse af beskeden' });
-  }
-});
-
-// Endpoint til at tjekke status for et produkt
-app.get('/api/stands/check/:standerId', async (req, res) => {
-  try {
-    const stand = await Stand.findOne({ standerId: req.params.standerId });
-    
-    if (!stand) {
-      return res.status(404).json({ 
-        message: 'Produkt ikke fundet',
-        status: 'not_found'
-      });
-    }
-
-    const status = {
-      standerId: stand.standerId,
-      status: stand.status || (stand.claimed ? 'claimed' : 'unclaimed'),
-      configured: stand.configured,
-      hasRedirect: !!stand.redirectUrl,
-      hasLandingPage: !!stand.landingPageId
-    };
-
-    console.log('Stand status tjek:', status);
-    res.json(status);
-  } catch (error) {
-    console.error('Fejl ved tjek af produkt status:', error);
-    res.status(500).json({ 
-      message: 'Der opstod en fejl ved tjek af produkt status',
-      status: 'error'
-    });
-  }
-});
-
-// Endpoint til at hente detaljer om et unclaimed produkt
-app.get('/api/stands/unclaimed/:standerId', async (req, res) => {
-  try {
-    const stand = await Stand.findOne({ 
-      standerId: req.params.standerId,
-      status: 'unclaimed' // Kun tjek for explicit unclaimed status
-    });
-
-    if (!stand) {
-      return res.status(404).json({ 
-        message: 'Unclaimed produkt ikke fundet' 
-      });
-    }
-
-    res.json({
-      standerId: stand.standerId,
-      productType: stand.productType,
-      createdAt: stand.createdAt
-    });
-  } catch (error) {
-    console.error('Fejl ved hentning af unclaimed produkt:', error);
-    res.status(500).json({ 
-      message: 'Der opstod en fejl ved hentning af unclaimed produkt' 
-    });
   }
 });
