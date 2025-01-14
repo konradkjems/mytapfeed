@@ -1407,8 +1407,7 @@ app.get('/:urlPath', async (req, res, next) => {
     console.log('Fundet stand:', stand ? {
       id: stand._id,
       standerId: stand.standerId,
-      claimed: stand.claimed,
-      configured: stand.configured,
+      status: stand.status,
       redirectUrl: stand.redirectUrl
     } : 'Ingen stand fundet');
 
@@ -1417,6 +1416,13 @@ app.get('/:urlPath', async (req, res, next) => {
         ? 'https://my.tapfeed.dk'
         : 'http://localhost:3001';
 
+      // Tjek specifikt for unclaimed status
+      if (stand.status === 'unclaimed') {
+        const unclaimedUrl = `${frontendUrl}/unclaimed/${stand.standerId}`;
+        console.log('Redirecter til unclaimed:', unclaimedUrl);
+        return res.redirect(unclaimedUrl);
+      } 
+      
       if (stand.redirectUrl) {
         let redirectUrl = stand.redirectUrl;
         if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
@@ -1426,10 +1432,6 @@ app.get('/:urlPath', async (req, res, next) => {
         stand.clicks = (stand.clicks || 0) + 1;
         await stand.save();
         return res.redirect(redirectUrl);
-      } else if (!stand.claimed) {
-        const unclaimedUrl = `${frontendUrl}/unclaimed/${stand.standerId}`;
-        console.log('Redirecter til unclaimed:', unclaimedUrl);
-        return res.redirect(unclaimedUrl);
       } else if (!stand.configured) {
         const notConfiguredUrl = `${frontendUrl}/not-configured/${stand.standerId}`;
         console.log('Redirecter til not-configured:', notConfiguredUrl);
@@ -3087,5 +3089,63 @@ app.post('/api/contact', async (req, res) => {
   } catch (error) {
     console.error('Fejl ved afsendelse af kontaktformular:', error);
     res.status(500).json({ message: 'Der opstod en fejl ved afsendelse af beskeden' });
+  }
+});
+
+// Endpoint til at tjekke status for et produkt
+app.get('/api/stands/check/:standerId', async (req, res) => {
+  try {
+    const stand = await Stand.findOne({ standerId: req.params.standerId });
+    
+    if (!stand) {
+      return res.status(404).json({ 
+        message: 'Produkt ikke fundet',
+        status: 'not_found'
+      });
+    }
+
+    const status = {
+      standerId: stand.standerId,
+      status: stand.status || (stand.claimed ? 'claimed' : 'unclaimed'),
+      configured: stand.configured,
+      hasRedirect: !!stand.redirectUrl,
+      hasLandingPage: !!stand.landingPageId
+    };
+
+    console.log('Stand status tjek:', status);
+    res.json(status);
+  } catch (error) {
+    console.error('Fejl ved tjek af produkt status:', error);
+    res.status(500).json({ 
+      message: 'Der opstod en fejl ved tjek af produkt status',
+      status: 'error'
+    });
+  }
+});
+
+// Endpoint til at hente detaljer om et unclaimed produkt
+app.get('/api/stands/unclaimed/:standerId', async (req, res) => {
+  try {
+    const stand = await Stand.findOne({ 
+      standerId: req.params.standerId,
+      status: 'unclaimed' // Kun tjek for explicit unclaimed status
+    });
+
+    if (!stand) {
+      return res.status(404).json({ 
+        message: 'Unclaimed produkt ikke fundet' 
+      });
+    }
+
+    res.json({
+      standerId: stand.standerId,
+      productType: stand.productType,
+      createdAt: stand.createdAt
+    });
+  } catch (error) {
+    console.error('Fejl ved hentning af unclaimed produkt:', error);
+    res.status(500).json({ 
+      message: 'Der opstod en fejl ved hentning af unclaimed produkt' 
+    });
   }
 });
