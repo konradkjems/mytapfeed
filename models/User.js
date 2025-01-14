@@ -59,7 +59,21 @@ const userSchema = new mongoose.Schema({
         default: 'https://res.cloudinary.com/da6jy4nml/image/upload/v1702320091/profile-images/default-avatar.png'
     },
     resetPasswordToken: String,
-    resetPasswordExpires: Date
+    resetPasswordExpires: Date,
+    shopifyCustomerId: String,
+    shopifySubscriptionId: String,
+    subscriptionStatus: {
+        type: String,
+        enum: ['active', 'cancelled', 'expired'],
+        default: null
+    },
+    subscriptionPlan: {
+        type: String,
+        enum: ['gratis', 'starter'],
+        default: 'gratis'
+    },
+    subscriptionStartDate: Date,
+    subscriptionEndDate: Date
 }, {
     timestamps: true
 });

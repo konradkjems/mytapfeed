@@ -37,6 +37,7 @@ const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const adminRouter = require('./routes/admin');
+const shopifyRouter = require('./routes/shopify');
 const { requireAuth, isAdmin } = require('./middleware/auth');
 
 // Cache konfiguration
@@ -2803,6 +2804,7 @@ app.get('/api/viewport-height', (req, res) => {
 app.use('/api/landing-pages', landingPagesRouter);
 app.use('/api/user', userRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/shopify', shopifyRouter);
 
 // Speciel CORS middleware for landing pages
 const landingPageCors = cors({
@@ -3089,3 +3091,46 @@ app.post('/api/contact', async (req, res) => {
     res.status(500).json({ message: 'Der opstod en fejl ved afsendelse af beskeden' });
   }
 });
+
+// Send velkomstmail funktion
+const sendWelcomeEmail = async (user, password) => {
+  try {
+    const transporter = nodemailer.createTransport({
+      service: 'gmail',
+      auth: {
+        user: process.env.GMAIL_USER,
+        pass: process.env.GMAIL_APP_PASSWORD
+      }
+    });
+
+    await transporter.sendMail({
+      from: {
+        name: 'TapFeed',
+        address: process.env.GMAIL_USER
+      },
+      to: user.email,
+      subject: 'Velkommen til TapFeed',
+      html: `
+        <h2>Velkommen til TapFeed!</h2>
+        <p>Din konto er blevet oprettet baseret på dit Shopify abonnement.</p>
+        <p>Du kan logge ind med følgende oplysninger:</p>
+        <p><strong>Email:</strong> ${user.email}</p>
+        <p><strong>Midlertidig adgangskode:</strong> ${password}</p>
+        <p>Vi anbefaler at du ændrer din adgangskode første gang du logger ind.</p>
+        <p>Du kan logge ind her: ${process.env.NODE_ENV === 'production' 
+          ? 'https://my.tapfeed.dk/login' 
+          : 'http://localhost:3001/login'}</p>
+        <br>
+        <p>Med venlig hilsen</p>
+        <p>TapFeed Team</p>
+      `
+    });
+
+    console.log('Velkomstmail sendt til:', user.email);
+  } catch (error) {
+    console.error('Fejl ved afsendelse af velkomstmail:', error);
+  }
+};
+
+// Eksporter sendWelcomeEmail så den kan bruges i shopify.js
+module.exports.sendWelcomeEmail = sendWelcomeEmail;
