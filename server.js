@@ -37,7 +37,6 @@ const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const adminRouter = require('./routes/admin');
-const shopifyRouter = require('./routes/shopify');
 const { requireAuth, isAdmin } = require('./middleware/auth');
 
 // Cache konfiguration
@@ -2804,7 +2803,6 @@ app.get('/api/viewport-height', (req, res) => {
 app.use('/api/landing-pages', landingPagesRouter);
 app.use('/api/user', userRouter);
 app.use('/api/admin', adminRouter);
-app.use('/api/shopify', shopifyRouter);
 
 // Speciel CORS middleware for landing pages
 const landingPageCors = cors({
@@ -3091,7 +3089,3 @@ app.post('/api/contact', async (req, res) => {
     res.status(500).json({ message: 'Der opstod en fejl ved afsendelse af beskeden' });
   }
 });
-
-// Tilføj den korrekte eksport
-const app = express();
-module.exports = app;
