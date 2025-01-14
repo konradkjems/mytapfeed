@@ -22,6 +22,10 @@ const standSchema = new mongoose.Schema({
         enum: ['unclaimed', 'claimed'],
         default: 'unclaimed'
     },
+    configured: {
+        type: Boolean,
+        default: false
+    },
     ownerId: {
         type: mongoose.Schema.Types.ObjectId,
         ref: 'User'

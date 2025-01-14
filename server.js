@@ -929,6 +929,9 @@ app.put('/api/stands/:id', authenticateToken, async (req, res) => {
       }
     }
 
+    // Et produkt er konfigureret hvis det har enten en redirectUrl eller en landingPageId
+    const configured = !!(redirectUrl || landingPageId);
+
     const stand = await Stand.findOneAndUpdate(
       { 
         _id: req.params.id,
@@ -940,7 +943,8 @@ app.put('/api/stands/:id', authenticateToken, async (req, res) => {
       { 
         nickname,
         landingPageId: landingPageId || null,
-        redirectUrl: redirectUrl || null
+        redirectUrl: redirectUrl || null,
+        configured
       },
       { new: true }
     );
@@ -952,7 +956,7 @@ app.put('/api/stands/:id', authenticateToken, async (req, res) => {
     res.json(stand);
   } catch (error) {
     console.error('Fejl ved opdatering af produkt:', error);
-    res.status(500).json({ message: 'Der opstod en fejl ved opdatering af produkt' });
+    res.status(500).json({ message: 'Der opstod en fejl ved opdatering af produktet' });
   }
 });
 
@@ -1587,6 +1591,7 @@ app.post('/api/stands/:standerId/claim', authenticateToken, async (req, res) => 
         stand.status = 'claimed';
         stand.ownerId = req.user._id;
         stand.claimedAt = new Date();
+        stand.configured = false; // Sæt configured til false når produktet først bliver claimed
         await stand.save();
 
         // Send succes respons
@@ -3284,7 +3289,9 @@ app.get([
   '/landing/*'
 ], (req, res) => {
   console.log('Serving frontend for path:', req.path);
-  res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+  const indexPath = path.join(__dirname, 'frontend/build', 'index.html');
+  console.log('Serving index.html from:', indexPath);
+  res.sendFile(indexPath);
 });
 
 // Produkt redirect route
@@ -3340,5 +3347,7 @@ app.get('/:standerId([A-Za-z0-9]+)', async (req, res, next) => {
 // Final catch-all
 app.get('*', (req, res) => {
   console.log('Serving frontend for unknown path:', req.path);
-  res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+  const indexPath = path.join(__dirname, 'frontend/build', 'index.html');
+  console.log('Serving index.html from:', indexPath);
+  res.sendFile(indexPath);
 });
