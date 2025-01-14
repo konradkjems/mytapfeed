@@ -3267,3 +3267,78 @@ app.get(['/unclaimed/*', '/not-configured/*'], (req, res) => {
     res.status(404).send('Frontend application not found');
   }
 });
+
+// Serve static files først
+app.use(express.static(path.join(__dirname, 'frontend/build')));
+
+// API routes (behold alle eksisterende API routes)
+
+// Frontend routes
+app.get([
+  '/unclaimed/*',
+  '/not-configured/*',
+  '/dashboard',
+  '/login',
+  '/register',
+  '/settings',
+  '/landing/*'
+], (req, res) => {
+  console.log('Serving frontend for path:', req.path);
+  res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+});
+
+// Produkt redirect route
+app.get('/:standerId([A-Za-z0-9]+)', async (req, res, next) => {
+  try {
+    const stand = await Stand.findOne({ standerId: req.params.standerId });
+    
+    if (!stand) {
+      console.log('Stand ikke fundet:', req.params.standerId);
+      return next();
+    }
+
+    const frontendUrl = process.env.NODE_ENV === 'production'
+      ? 'https://my.tapfeed.dk'
+      : 'http://localhost:3001';
+
+    console.log('Stand fundet:', {
+      standerId: stand.standerId,
+      status: stand.status,
+      configured: stand.configured
+    });
+
+    if (stand.status === 'unclaimed') {
+      const url = `${frontendUrl}/unclaimed/${stand.standerId}`;
+      console.log('Redirecting to unclaimed:', url);
+      return res.redirect(302, url);
+    }
+
+    if (!stand.configured || (!stand.redirectUrl && !stand.landingPageId)) {
+      const url = `${frontendUrl}/not-configured/${stand.standerId}`;
+      console.log('Redirecting to not-configured:', url);
+      return res.redirect(302, url);
+    }
+
+    if (stand.redirectUrl) {
+      let redirectUrl = stand.redirectUrl;
+      if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
+        redirectUrl = 'https://' + redirectUrl;
+      }
+      console.log('Redirecting to external:', redirectUrl);
+      stand.clicks = (stand.clicks || 0) + 1;
+      await stand.save();
+      return res.redirect(302, redirectUrl);
+    }
+
+    next();
+  } catch (error) {
+    console.error('Fejl ved håndtering af produkt redirect:', error);
+    next(error);
+  }
+});
+
+// Final catch-all
+app.get('*', (req, res) => {
+  console.log('Serving frontend for unknown path:', req.path);
+  res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+});
