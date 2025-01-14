@@ -896,8 +896,15 @@ app.post('/api/stands/bulk', requireAuth, async (req, res) => {
             });
         }
 
+        // Tilføj configured: false til alle produkter
+        const productsWithConfig = products.map(product => ({
+            ...product,
+            status: 'unclaimed',
+            configured: false
+        }));
+
         // Opret alle produkter
-        const createdStands = await Stand.insertMany(products);
+        const createdStands = await Stand.insertMany(productsWithConfig);
 
         res.status(201).json({
             message: `${createdStands.length} produkter oprettet succesfuldt`,
@@ -941,10 +948,12 @@ app.put('/api/stands/:id', authenticateToken, async (req, res) => {
         ]
       },
       { 
-        nickname,
-        landingPageId: landingPageId || null,
-        redirectUrl: redirectUrl || null,
-        configured
+        $set: {
+          nickname: nickname || null,
+          landingPageId: landingPageId || null,
+          redirectUrl: redirectUrl || null,
+          configured
+        }
       },
       { new: true }
     );
@@ -952,6 +961,14 @@ app.put('/api/stands/:id', authenticateToken, async (req, res) => {
     if (!stand) {
       return res.status(404).json({ message: 'Produkt ikke fundet' });
     }
+
+    console.log('Produkt opdateret:', {
+      id: stand._id,
+      nickname,
+      redirectUrl,
+      landingPageId,
+      configured
+    });
 
     res.json(stand);
   } catch (error) {
@@ -1575,6 +1592,11 @@ app.get('*', (req, res) => {
 // Endpoint til at claime et produkt
 app.post('/api/stands/:standerId/claim', authenticateToken, async (req, res) => {
     try {
+        console.log('Forsøger at claime produkt:', {
+            standerId: req.params.standerId,
+            userId: req.user._id
+        });
+
         // Find produktet og tjek at det er unclaimed
         const stand = await Stand.findOne({ 
             standerId: req.params.standerId,
@@ -1582,6 +1604,7 @@ app.post('/api/stands/:standerId/claim', authenticateToken, async (req, res) => 
         });
 
         if (!stand) {
+            console.log('Produkt ikke fundet eller allerede claimed:', req.params.standerId);
             return res.status(404).json({ 
                 message: 'Produkt ikke fundet eller er allerede aktiveret' 
             });
@@ -1593,6 +1616,12 @@ app.post('/api/stands/:standerId/claim', authenticateToken, async (req, res) => 
         stand.claimedAt = new Date();
         stand.configured = false; // Sæt configured til false når produktet først bliver claimed
         await stand.save();
+
+        console.log('Produkt claimed succesfuldt:', {
+            standerId: stand.standerId,
+            userId: req.user._id,
+            status: stand.status
+        });
 
         // Send succes respons
         res.json({ 
