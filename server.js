@@ -3202,3 +3202,48 @@ app.post('/api/contact', async (req, res) => {
     res.status(500).json({ message: 'Der opstod en fejl ved afsendelse af beskeden' });
   }
 });
+
+// Opdater catch-all route for frontend routes i production
+app.get(['/unclaimed/*', '/not-configured/*', '/dashboard/*', '/login', '/register', '/settings'], (req, res) => {
+  console.log('Håndterer frontend app route:', {
+    path: req.path,
+    environment: process.env.NODE_ENV,
+    host: req.get('host')
+  });
+  
+  // Send index.html for alle frontend routes
+  res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+});
+
+// Generel catch-all route som skal være SIDSTE route
+app.get('*', (req, res) => {
+  console.log('Håndterer ukendt route:', {
+    path: req.path,
+    environment: process.env.NODE_ENV,
+    host: req.get('host')
+  });
+  
+  // I production, tjek om det er en kendt frontend route
+  if (process.env.NODE_ENV === 'production') {
+    const knownFrontendRoutes = [
+      '/unclaimed',
+      '/not-configured',
+      '/dashboard',
+      '/login',
+      '/register',
+      '/settings'
+    ];
+
+    // Hvis stien starter med en kendt frontend route, send index.html
+    if (knownFrontendRoutes.some(route => req.path.startsWith(route))) {
+      console.log('Sender frontend app for kendt route:', req.path);
+      return res.sendFile(path.join(__dirname, 'frontend/build', 'index.html'));
+    }
+  }
+  
+  // Hvis ikke en kendt route, send 404
+  res.status(404).send('Side ikke fundet');
+});
+
+// Flyt static file serving før de specifikke routes
+app.use(express.static(path.join(__dirname, 'frontend/build')));
