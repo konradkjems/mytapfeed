@@ -2,7 +2,7 @@ const express = require('express');
 const router = express.Router();
 const crypto = require('crypto');
 const User = require('../models/User');
-const { sendWelcomeEmail } = require('../server');
+const { sendWelcomeEmail } = require('../utils/emailService');
 const axios = require('axios');
 
 // API konfiguration
