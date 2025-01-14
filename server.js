@@ -3247,3 +3247,23 @@ app.get('*', (req, res) => {
 
 // Flyt static file serving før de specifikke routes
 app.use(express.static(path.join(__dirname, 'frontend/build')));
+
+// Tilføj denne route handler lige efter dine API routes men før den generelle catch-all
+app.get(['/unclaimed/*', '/not-configured/*'], (req, res) => {
+  console.log('Frontend special route match:', {
+    path: req.path,
+    environment: process.env.NODE_ENV,
+    host: req.get('host')
+  });
+  
+  // Send index.html direkte fra build mappen
+  const indexPath = path.join(__dirname, 'frontend', 'build', 'index.html');
+  console.log('Serving index.html from:', indexPath);
+  
+  if (fs.existsSync(indexPath)) {
+    res.sendFile(indexPath);
+  } else {
+    console.error('index.html not found at:', indexPath);
+    res.status(404).send('Frontend application not found');
+  }
+});
