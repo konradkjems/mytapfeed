@@ -45,8 +45,17 @@ const standSchema = new mongoose.Schema({
     clickHistory: [{
         timestamp: {
             type: Date,
-            default: Date.now
-        }
+            required: true,
+            set: function(v) {
+                // Konverter til Date objekt hvis det er en string
+                return typeof v === 'string' ? new Date(v) : v;
+            },
+            get: function(v) {
+                // Returner som ISO string når vi henter værdien
+                return v ? v.toISOString() : null;
+            }
+        },
+        ip: String
     }],
     claimedAt: {
         type: Date
@@ -55,6 +64,8 @@ const standSchema = new mongoose.Schema({
         type: Date,
         default: Date.now
     }
+}, {
+    timestamps: true // Tilføj automatisk updatedAt og createdAt
 });
 
 module.exports = mongoose.model('Stand', standSchema); 

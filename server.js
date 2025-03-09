@@ -37,6 +37,7 @@ const nodemailer = require('nodemailer');
 const crypto = require('crypto');
 const QRCode = require('qrcode');
 const adminRouter = require('./routes/admin');
+const businessRouter = require('./routes/business');
 const { requireAuth, isAdmin } = require('./middleware/auth');
 
 // Cache konfiguration
@@ -138,18 +139,32 @@ app.use(session({
         touchAfter: 24 * 3600
     }),
     cookie: {
-        secure: process.env.NODE_ENV === 'production',
+        secure: false, // Sæt til false i development
         httpOnly: true,
-        sameSite: process.env.NODE_ENV === 'production' ? 'none' : 'lax',
+        sameSite: 'lax',
         maxAge: 24 * 60 * 60 * 1000,
-        domain: process.env.NODE_ENV === 'production' ? '.tapfeed.dk' : 'localhost'
+        domain: 'localhost'
     },
-    proxy: true
+    proxy: false // Sæt til false i development
 }));
 
 // Initialize Passport
 app.use(passport.initialize());
 app.use(passport.session());
+
+// Passport serialization
+passport.serializeUser((user, done) => {
+    done(null, user.id);
+});
+
+passport.deserializeUser(async (id, done) => {
+    try {
+        const user = await User.findById(id);
+        done(null, user);
+    } catch (err) {
+        done(err);
+    }
+});
 
 // Debug middleware for sessions
 app.use((req, res, next) => {
@@ -177,6 +192,7 @@ app.use((req, res, next) => {
 app.use('/api/admin', adminRouter);
 app.use('/api/landing-pages', landingPagesRouter);
 app.use('/api/user', userRouter);
+app.use('/api/business', businessRouter);
 
 // Basic routes
 app.get('/', (req, res) => {
@@ -242,7 +258,7 @@ app.post('/api/auth/login', async (req, res) => {
 // Authentication middleware
 const authenticateToken = async (req, res, next) => {
     try {
-        if (!req.session.userId) {
+        if (!req.session || !req.session.userId) {
             return res.status(401).json({ message: 'Ikke autoriseret' });
         }
 
@@ -253,6 +269,8 @@ const authenticateToken = async (req, res, next) => {
         }
 
         req.user = user;
+        req.session.userId = user._id;
+        req.isAuthenticated = true;
         next();
     } catch (error) {
         console.error('Auth error:', error);
@@ -1540,7 +1558,18 @@ app.get('/:urlPath', async (req, res, next) => {
           environment: process.env.NODE_ENV
         });
         stand.clicks = (stand.clicks || 0) + 1;
+        const now = new Date();
+        now.setHours(now.getHours() + 1); // Tilføj 1 time for at konvertere til dansk tid
+        stand.clickHistory.push({ timestamp: now });
+        
         await stand.save();
+
+        console.log('Klik registreret:', {
+            standId: stand._id,
+            clicks: stand.clicks,
+            clickTime: now.toISOString(),
+            localTime: now.toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen' })
+        });
         return res.redirect(302, redirectUrl);
       }
     }
@@ -1594,7 +1623,10 @@ app.post('/api/stands/:standerId/claim', authenticateToken, async (req, res) => 
     try {
         console.log('Forsøger at claime produkt:', {
             standerId: req.params.standerId,
-            userId: req.user._id
+            userId: req.session.userId,
+            sessionId: req.sessionID,
+            user: req.user?._id,
+            session: req.session
         });
 
         // Find produktet og tjek at det er unclaimed
@@ -1610,17 +1642,29 @@ app.post('/api/stands/:standerId/claim', authenticateToken, async (req, res) => 
             });
         }
 
+        // Hent bruger for at sikre at de eksisterer
+        const user = await User.findById(req.session.userId);
+        if (!user) {
+            console.log('Bruger ikke fundet:', req.session.userId);
+            return res.status(404).json({ 
+                message: 'Bruger ikke fundet' 
+            });
+        }
+
         // Opdater stand med den nye ejer
         stand.status = 'claimed';
-        stand.ownerId = req.user._id;
+        stand.ownerId = user._id;
+        stand.userId = user._id;
         stand.claimedAt = new Date();
-        stand.configured = false; // Sæt configured til false når produktet først bliver claimed
+        stand.configured = false;
         await stand.save();
 
         console.log('Produkt claimed succesfuldt:', {
             standerId: stand.standerId,
-            userId: req.user._id,
-            status: stand.status
+            userId: user._id,
+            ownerId: stand.ownerId,
+            status: stand.status,
+            configured: stand.configured
         });
 
         // Send succes respons
@@ -1647,6 +1691,7 @@ app.post('/api/stands/:standId/click', async (req, res) => {
         // Opdater antal kliks og clickHistory
         stand.clicks = (stand.clicks || 0) + 1;
         const now = new Date();
+        now.setHours(now.getHours() + 1); // Tilføj 1 time for at konvertere til dansk tid
         stand.clickHistory.push({ timestamp: now });
         
         await stand.save();
@@ -1654,7 +1699,8 @@ app.post('/api/stands/:standId/click', async (req, res) => {
         console.log('Klik registreret:', {
             standId: stand._id,
             clicks: stand.clicks,
-            clickTime: now.toISOString()
+            clickTime: now.toISOString(),
+            localTime: now.toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen' })
         });
 
         res.json({ message: 'Klik registreret', clicks: stand.clicks });
@@ -2223,54 +2269,35 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
 
         console.log('Søger efter virksomheder med query:', searchQuery);
 
-        // Implementer exponential backoff
-        const fetchWithRetry = async (retryCount = 0) => {
-            try {
-                if (retryCount > 0) {
-                    const delay = Math.min(Math.pow(2, retryCount) * 1000, 10000);
-                    console.log(`Venter ${delay}ms før næste forsøg...`);
-                    await new Promise(resolve => setTimeout(resolve, delay));
-                }
+        const searchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(searchQuery)}&key=${process.env.GOOGLE_MAPS_API_KEY}&language=da&region=dk&type=establishment`;
+        const searchResponse = await axios.get(searchUrl);
 
-                const searchUrl = `https://maps.googleapis.com/maps/api/place/textsearch/json?query=${encodeURIComponent(searchQuery)}&key=${process.env.GOOGLE_MAPS_API_KEY}&language=da&region=dk&type=establishment`;
-                const searchResponse = await axios.get(searchUrl);
+        if (searchResponse.data.status === 'ZERO_RESULTS') {
+            return res.json({ places: [] });
+        }
 
-                if (searchResponse.data.status === 'ZERO_RESULTS') {
-                    return [];
-                }
+        if (searchResponse.data.status === 'REQUEST_DENIED') {
+            throw new Error(searchResponse.data.error_message || 'API anmodning afvist');
+        }
 
-                if (searchResponse.data.status === 'REQUEST_DENIED') {
-                    throw new Error(searchResponse.data.error_message || 'API anmodning afvist');
-                }
+        if (searchResponse.data.status === 'OVER_QUERY_LIMIT') {
+            return res.status(429).json({ 
+                message: 'API kvote overskredet. Prøv igen senere.',
+                retryAfter: 60
+            });
+        }
 
-                if (searchResponse.data.status === 'OVER_QUERY_LIMIT') {
-                    if (retryCount < 3) {
-                        return await fetchWithRetry(retryCount + 1);
-                    }
-                    throw new Error('API kvote overskredet');
-                }
+        const places = searchResponse.data.results.map(place => ({
+            placeId: place.place_id,
+            name: place.name,
+            address: place.formatted_address,
+            rating: place.rating,
+            userRatingsTotal: place.user_ratings_total,
+            types: place.types
+        }));
 
-                const places = searchResponse.data.results.map(place => ({
-                    placeId: place.place_id,
-                    name: place.name,
-                    address: place.formatted_address,
-                    rating: place.rating,
-                    userRatingsTotal: place.user_ratings_total,
-                    types: place.types
-                }));
-
-                // Gem resultater i cache
-                searchCache.set(cacheKey, places);
-                return places;
-            } catch (error) {
-                if (error.response?.status === 429 && retryCount < 3) {
-                    return await fetchWithRetry(retryCount + 1);
-                }
-                throw error;
-            }
-        };
-
-        const places = await fetchWithRetry();
+        // Gem resultater i cache
+        searchCache.set(cacheKey, places);
         res.json({ places });
 
     } catch (error) {
@@ -2279,13 +2306,6 @@ app.get('/api/business/search', authenticateToken, placesSearchLimiter, async (r
             response: error.response?.data,
             stack: error.stack
         });
-
-        if (error.response?.status === 429) {
-            return res.status(429).json({ 
-                message: 'For mange anmodninger. Prøv igen om et øjeblik.',
-                retryAfter: 60
-            });
-        }
 
         res.status(500).json({ 
             message: 'Der opstod en fejl ved søgning. Prøv igen senere.',
@@ -2950,6 +2970,7 @@ app.get('/api/viewport-height', (req, res) => {
 app.use('/api/landing-pages', landingPagesRouter);
 app.use('/api/user', userRouter);
 app.use('/api/admin', adminRouter);
+app.use('/api/business', businessRouter);
 
 // Speciel CORS middleware for landing pages
 const landingPageCors = cors({
@@ -3326,6 +3347,15 @@ app.get([
 // Produkt redirect route
 app.get('/:standerId([A-Za-z0-9]+)', async (req, res, next) => {
   try {
+    console.log('Håndterer produkt redirect:', {
+      standerId: req.params.standerId,
+      environment: process.env.NODE_ENV
+    });
+
+    const frontendUrl = process.env.NODE_ENV === 'production'
+      ? 'https://my.tapfeed.dk'
+      : 'http://localhost:3001';
+
     const stand = await Stand.findOne({ standerId: req.params.standerId });
     
     if (!stand) {
@@ -3333,10 +3363,82 @@ app.get('/:standerId([A-Za-z0-9]+)', async (req, res, next) => {
       return next();
     }
 
-    const frontendUrl = process.env.NODE_ENV === 'production'
-      ? 'https://my.tapfeed.dk'
-      : 'http://localhost:3001';
+    // Registrer visning for alle produkt besøg
+    try {
+      console.log('Før opdatering:', {
+        standerId: stand.standerId,
+        currentClicks: stand.clicks,
+        currentClickHistoryLength: stand.clickHistory?.length || 0,
+        _id: stand._id.toString()
+      });
 
+      // Opret timestamp i dansk tid (UTC+1)
+      const now = new Date();
+      now.setHours(now.getHours() + 1);
+
+      // Forsøg at opdatere direkte med updateOne
+      const updateResult = await Stand.updateOne(
+        { _id: stand._id },
+        {
+          $inc: { clicks: 1 },
+          $push: {
+            clickHistory: {
+              timestamp: now,
+              ip: req.ip
+            }
+          }
+        }
+      );
+
+      console.log('MongoDB Update Result:', {
+        matchedCount: updateResult.matchedCount,
+        modifiedCount: updateResult.modifiedCount,
+        acknowledged: updateResult.acknowledged,
+        timestamp: now.toISOString(),
+        localTime: now.toLocaleString('da-DK', { timeZone: 'Europe/Copenhagen' })
+      });
+
+      if (updateResult.modifiedCount === 0) {
+        console.error('Ingen ændringer blev gemt. Prøver alternativ metode...');
+        
+        // Alternativ metode: Hent dokumentet først og opdater det
+        const standToUpdate = await Stand.findById(stand._id);
+        if (standToUpdate) {
+          standToUpdate.clicks += 1;
+          standToUpdate.clickHistory.push({
+            timestamp: now,
+            ip: req.ip
+          });
+          await standToUpdate.save();
+          console.log('Alternativ metode success');
+        }
+      }
+
+      // Hent den opdaterede stand for at verificere ændringerne
+      const updatedStand = await Stand.findById(stand._id);
+      
+      console.log('Efter opdatering:', {
+        standerId: updatedStand.standerId,
+        newClicks: updatedStand.clicks,
+        newClickHistoryLength: updatedStand.clickHistory?.length || 0,
+        latestClick: updatedStand.clickHistory[updatedStand.clickHistory.length - 1],
+        allClicks: updatedStand.clickHistory.map(click => ({
+          timestamp: click.timestamp,
+          ip: click.ip
+        }))
+      });
+
+      // Opdater den lokale reference
+      stand = updatedStand;
+    } catch (error) {
+      console.error('Fejl ved registrering af visning:', {
+        error: error.message,
+        stack: error.stack,
+        standerId: stand?.standerId,
+        _id: stand?._id?.toString()
+      });
+    }
+    
     console.log('Stand fundet:', {
       standerId: stand.standerId,
       status: stand.status,
@@ -3350,19 +3452,27 @@ app.get('/:standerId([A-Za-z0-9]+)', async (req, res, next) => {
     }
 
     if (!stand.configured || (!stand.redirectUrl && !stand.landingPageId)) {
-      const url = `${frontendUrl}/not-configured/${stand.standerId}`;
-      console.log('Redirecting to not-configured:', url);
-      return res.redirect(302, url);
+      const notConfiguredUrl = `${frontendUrl}/not-configured/${stand.standerId}`;
+      console.log('Redirecting to not-configured:', {
+        url: notConfiguredUrl,
+        standStatus: stand.status,
+        configured: stand.configured,
+        environment: process.env.NODE_ENV
+      });
+      return res.redirect(302, notConfiguredUrl);
     }
-
+    
     if (stand.redirectUrl) {
       let redirectUrl = stand.redirectUrl;
       if (!redirectUrl.startsWith('http://') && !redirectUrl.startsWith('https://')) {
         redirectUrl = 'https://' + redirectUrl;
       }
-      console.log('Redirecting to external:', redirectUrl);
-      stand.clicks = (stand.clicks || 0) + 1;
-      await stand.save();
+      console.log('Redirecter til ekstern URL:', {
+        url: redirectUrl,
+        standStatus: stand.status,
+        environment: process.env.NODE_ENV
+      });
+
       return res.redirect(302, redirectUrl);
     }
 
