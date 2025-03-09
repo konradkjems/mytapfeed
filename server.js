@@ -129,13 +129,17 @@ app.use(express.urlencoded({ extended: true }));
 
 // Session konfiguration
 app.use(session({
-    secret: process.env.SESSION_SECRET,
+    secret: process.env.SESSION_SECRET || 'dev-secret-key', // Brug miljøvariabel eller en dev nøgle
     resave: false,
     saveUninitialized: false,
+    store: MongoStore.create({ 
+        mongoUrl: process.env.MONGODB_URI,
+        ttl: 7 * 24 * 60 * 60 // 1 uge
+    }),
     cookie: { 
-      secure: process.env.NODE_ENV === 'production',
-      httpOnly: true,
-      maxAge: 7 * 24 * 60 * 60 * 1000 // 1 uge
+        secure: process.env.NODE_ENV === 'production',
+        httpOnly: true,
+        maxAge: 7 * 24 * 60 * 60 * 1000 // 1 uge
     }
 }));
 
@@ -3481,3 +3485,8 @@ app.get('*', (req, res) => {
   console.log('Serving index.html from:', indexPath);
   res.sendFile(indexPath);
 });
+
+if (!process.env.SESSION_SECRET && process.env.NODE_ENV === 'production') {
+    console.error('FATAL ERROR: SESSION_SECRET er ikke defineret i produktionsmiljø');
+    process.exit(1);
+}
