@@ -3490,3 +3490,29 @@ if (!process.env.SESSION_SECRET && process.env.NODE_ENV === 'production') {
     console.error('FATAL ERROR: SESSION_SECRET er ikke defineret i produktionsmiljø');
     process.exit(1);
 }
+
+app.post('/api/stands/activate/:standerId', authenticateToken, async (req, res) => {
+  try {
+    const { standerId } = req.params;
+    const userId = req.user.id;
+
+    // Tjek om produktet findes og er uaktiveret
+    const stand = await Stand.findOne({ standerId });
+    if (!stand) {
+      return res.status(404).json({ message: 'Produkt ikke fundet' });
+    }
+
+    if (stand.userId) {
+      return res.status(400).json({ message: 'Produkt er allerede aktiveret' });
+    }
+
+    // Aktiver produktet
+    stand.userId = userId;
+    await stand.save();
+
+    res.status(200).json({ message: 'Produkt aktiveret succesfuldt', stand });
+  } catch (error) {
+    console.error('Fejl ved aktivering:', error);
+    res.status(500).json({ message: 'Der opstod en fejl ved aktivering af produkt' });
+  }
+});
