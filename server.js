@@ -129,23 +129,14 @@ app.use(express.urlencoded({ extended: true }));
 
 // Session konfiguration
 app.use(session({
-    secret: process.env.SESSION_SECRET || 'mytapfeed-dev-secret-key',
+    secret: process.env.SESSION_SECRET,
     resave: false,
     saveUninitialized: false,
-    store: MongoStore.create({ 
-        mongoUrl: process.env.MONGODB_URI,
-        ttl: 24 * 60 * 60,
-        autoRemove: 'native',
-        touchAfter: 24 * 3600
-    }),
-    cookie: {
-        secure: false, // Sæt til false i development
-        httpOnly: true,
-        sameSite: 'lax',
-        maxAge: 24 * 60 * 60 * 1000,
-        domain: 'localhost'
-    },
-    proxy: false // Sæt til false i development
+    cookie: { 
+      secure: process.env.NODE_ENV === 'production',
+      httpOnly: true,
+      maxAge: 7 * 24 * 60 * 60 * 1000 // 1 uge
+    }
 }));
 
 // Initialize Passport
